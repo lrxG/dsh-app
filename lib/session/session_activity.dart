@@ -46,9 +46,6 @@ class SessionActivity extends ChangeNotifier {
   bool _stopped = true;
   bool _foreground = true;
 
-  /// Session currently open in a chat page, for notification suppression.
-  String? activeSessionId;
-
   String? titleOf(String sessionId) => _rows[sessionId]?.title;
 
   String? parentOf(String sessionId) => _rows[sessionId]?.parentId;
@@ -71,6 +68,10 @@ class SessionActivity extends ChangeNotifier {
   void setForeground(bool value) {
     if (_foreground == value) return;
     _foreground = value;
+    // Coming back or going away, the map may have missed the final status
+    // frames while the phone dozed; re-read the baseline so a stale "running"
+    // row can neither keep a green dot lit nor block the next notification.
+    unawaited(_prime(refresh: true));
     notifyListeners();
   }
 
@@ -91,21 +92,34 @@ class SessionActivity extends ChangeNotifier {
     await _dial();
   }
 
-  Future<void> _prime() async {
+  Future<void> _prime({bool refresh = false}) async {
     final rpc = _rpc;
-    if (rpc == null) return;
+    if (rpc == null || _stopped) return;
+    // `refresh` means the socket was silent for a while: whatever we latched
+    // from events before is no longer authoritative, the HTTP baseline is.
+    // Clearing first keeps a live frame that lands mid-request newer than it.
+    if (refresh) _live.clear();
     try {
       final items = await rpc.listSessions();
       if (_stopped) return;
+      // A session that ran and is idle again finished while the socket was
+      // silent; that completion still deserves its notification.
+      final completed = <String>[];
       for (final s in items) {
         final row = _rows.putIfAbsent(s.sessionId, _Row.new);
         row.title = s.title ?? row.title;
         row.parentId = s.parentSessionId ?? row.parentId;
         row.subagent = s.origin == 'subagent' || row.subagent;
         // A status event already seen is newer than this HTTP baseline.
-        if (!_live.contains(s.sessionId)) row.running = s.running;
+        if (!_live.contains(s.sessionId)) {
+          if (row.running && !s.running) completed.add(s.sessionId);
+          row.running = s.running;
+        }
       }
       notifyListeners();
+      for (final id in completed) {
+        _scheduleSettle(id);
+      }
     } catch (_) {
       // Offline or mid-restart: events still arrive once the socket is up.
     }
@@ -134,12 +148,16 @@ class SessionActivity extends ChangeNotifier {
       onDone: _scheduleRetry,
       cancelOnError: true,
     );
-    // Titles/parent links may have changed while we were disconnected.
-    unawaited(_prime());
+    // Titles/parent links may have changed while we were disconnected, and
+    // status frames were missed: trust the baseline again.
+    unawaited(_prime(refresh: true));
   }
 
   void _scheduleRetry() {
     if (_stopped) return;
+    // We cannot see what happened while the socket was down; the next
+    // baseline must win over the statuses latched before the drop.
+    _live.clear();
     _retry?.cancel();
     _retry = Timer(const Duration(seconds: 5), _dial);
   }
@@ -205,10 +223,11 @@ class SessionActivity extends ChangeNotifier {
     if (_stopped) return;
     final root = _rootOf(sessionId);
     if (_rows[root]?.subagent ?? false) return; // subagents serve the session
-    // Never interrupt someone who is already looking at this conversation —
-    // including one of its subagent conversations.
-    final open = activeSessionId;
-    if (open != null && _rootOf(open) == root) return;
+    // Foreground means the answer is already on screen (in the open chat, or a
+    // green dot in the list). Do NOT also look at "which chat page is open":
+    // that page stays on the stack while the app is in the background, and
+    // suppressing it would swallow exactly the notification the user waits
+    // for after leaving a conversation running.
     if (_foreground) return;
     if (_isBusy(root)) return;
     final now = DateTime.now();

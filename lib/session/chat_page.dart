@@ -96,8 +96,8 @@ class _ChatPageState extends State<ChatPage> {
   /// One staged document; uploaded before the prompt and cited by receipt.
   AttachmentFile? _pendingFile;
 
-  /// Last "answer finished" notification, to avoid duplicates from the
-  /// stream-end frame plus the durable message echo.
+  /// Last "answer finished" preview, to avoid duplicates from the stream-end
+  /// frame plus the durable message echo.
   DateTime? _lastTurnNotify;
 
   /// Current conversation: starts as [ChatPage.sessionId] and switches to the
@@ -119,7 +119,6 @@ class _ChatPageState extends State<ChatPage> {
     _input.addListener(() {
       if (mounted) setState(() {});
     });
-    SessionActivity.instance.activeSessionId = _sessionId;
     SessionActivity.instance.addListener(_onActivity);
     _follow(auto: false);
   }
@@ -473,21 +472,25 @@ class _ChatPageState extends State<ChatPage> {
 
   /// System notification when a turn that was running has settled.
   void _notifyTurnDone(String text) {
+    // Subagents serve their session; only the main one raises a notification.
+    if (widget.isSubagent) return;
     // Looking at the app means the answer is already on screen.
     if (SessionActivity.instance.isForeground) return;
+    // The stream-end frame and the durable echo describe the same completion.
     final now = DateTime.now();
-    if (_lastTurnNotify != null &&
-        now.difference(_lastTurnNotify!).inSeconds < 5) {
-      return;
-    }
+    final last = _lastTurnNotify;
+    if (last != null && now.difference(last).inSeconds < 5) return;
     _lastTurnNotify = now;
     final preview = text.replaceAll(RegExp(r'\s+'), ' ').trim();
+    // The preview is richer than the activity watcher's generic line, so it is
+    // allowed to replace it when the two race.
     Notifier.instance.show(
       title: '回答完成 · $_title',
       body: preview.isEmpty
           ? '会话已空闲'
           : (preview.length > 80 ? '${preview.substring(0, 80)}…' : preview),
       sessionId: _sessionId,
+      replace: true,
     );
   }
 
@@ -895,7 +898,6 @@ class _ChatPageState extends State<ChatPage> {
           _busy = false;
           _live = null;
         });
-        SessionActivity.instance.activeSessionId = id;
         await _follow(auto: true);
       }
       final content = <Map<String, dynamic>>[
@@ -1039,9 +1041,6 @@ class _ChatPageState extends State<ChatPage> {
   @override
   void dispose() {
     SessionActivity.instance.removeListener(_onActivity);
-    if (SessionActivity.instance.activeSessionId == _sessionId) {
-      SessionActivity.instance.activeSessionId = null;
-    }
     _retryTimer?.cancel();
     _sub?.cancel();
     _mux.close();

@@ -23,6 +23,12 @@ class Notifier {
 
   static bool _handling = false;
 
+  /// Last post per session, so the chat's answer preview and the activity
+  /// watcher's generic "task finished" line collapse into one notification.
+  static final Map<String, DateTime> _lastShown = {};
+  static const Duration _echoWindow = Duration(seconds: 4);
+  static const int _echoEntries = 64;
+
   /// Creates the channel, asks for POST_NOTIFICATIONS (Android 13+) and starts
   /// relaying notification taps. Safe to call once at startup.
   Future<void> init() async {
@@ -56,7 +62,33 @@ class Notifier {
     required String title,
     required String body,
     String? sessionId,
+    bool replace = false,
   }) async {
+    // Two watchers can describe the same completion (the open chat's preview,
+    // then the activity map settling). The first one wins; the echo within a
+    // few seconds would only replace a nicer body with a generic one. A
+    // preview (`replace`) is the richer body, so it may still land after the
+    // generic line.
+    final key = sessionId;
+    if (key != null && key.isNotEmpty) {
+      final now = DateTime.now();
+      final last = _lastShown[key];
+      if (!replace && last != null && now.difference(last) < _echoWindow) {
+        return;
+      }
+      if (_lastShown.length >= _echoEntries) {
+        var oldestKey = key;
+        var oldest = now;
+        for (final entry in _lastShown.entries) {
+          if (entry.value.isBefore(oldest)) {
+            oldest = entry.value;
+            oldestKey = entry.key;
+          }
+        }
+        _lastShown.remove(oldestKey);
+      }
+      _lastShown[key] = now;
+    }
     try {
       await _channel.invokeMethod<bool>('show', {
         'title': title,
