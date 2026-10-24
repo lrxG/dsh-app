@@ -2,9 +2,9 @@
 
 **English · 中文（同一页面双语）**
 
-Adds **dsh → Settings → 扫码配对** with the live pairing QR. The Android app (**[dsh app](https://github.com/lrxG/dsh-app)** — see its `main` branch / Releases) scans it to connect over the LAN.
+Adds **dsh → Settings → 扫码配对** with the live pairing QR. The Android app (**[DeepSeek Harness](https://github.com/lrxG/dsh-app)** — see its `main` branch / Releases) scans it to connect over the LAN.
 
-在 **dsh → 设置 →「扫码配对」** 里显示可扫的配对二维码。手机端（**dsh app**，见其 `main` 分支 / Releases）扫码即通过局域网连接。
+在 **dsh → 设置 →「扫码配对」** 里显示可扫的配对二维码。手机端（**DeepSeek Harness**，见其 `main` 分支 / Releases）扫码即通过局域网连接。
 
 ---
 
