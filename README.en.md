@@ -37,8 +37,22 @@ Done. Sessions, models and messages sync from the PC; you can keep chatting from
 | **Sessions** | Same workspace groups as the PC · archive/restore · pin · rename · search (name + content) · subagents · background jobs |
 | **Chat** | Streaming replies · reasoning fold · tool-call chips · stop turn · image & file attachments |
 | **Models** | Reads the PC catalog · two-level picker (model → effort) · each row shows the model it uses · writes back to the PC |
-| **Interaction** | Approval prompts (allow once / reject) · system notifications for approvals and finished answers |
+| **Subagents** | A parent that delegated work is no longer shown as "idle": the row dot and "subagent ×N" count the whole agent tree; tap to read the child sessions (read-only) |
+| **Interaction** | Approval prompts (allow once / reject) · background completion notifications (tap to open that conversation) |
 | **Devices** | Remember multiple PCs and switch with one tap |
+
+## Background notifications
+
+Leave the app (or lock the phone) and let a **main session** finish on the PC — the phone gets one ordinary notification. There is no persistent notification and no foreground service: nothing sits in the shade until a task actually completes.
+
+- Main sessions only: a finishing subagent never notifies on its own; the whole agent tree must settle first, then the parent gets one reminder.
+- Never while you are looking at that conversation, or while the app is in the foreground.
+- Tapping the notification opens that conversation.
+
+**The OS must be told not to freeze the app**: pairing page → "后台通知 → 设置" → **No restrictions**; HyperOS also needs autostart allowed. That exemption is what keeps the LAN socket alive without a permanent notification.
+
+Known limit (Android, not a missing feature): swiping the app away from recents, or an aggressive kill after long idle, drops the socket — notifications during that window are lost, and the app catches up when you reopen it.
+
 
 ## Where things live
 
@@ -85,6 +99,10 @@ Done. Sessions, models and messages sync from the PC; you can keep chatting from
 **Do I re-scan after a reboot?** No. Only re-scan if the cookie expired (30 days), the PC's IP changed, or you used “revoke all devices”.
 
 **Is my data uploaded anywhere?** No. The app only talks to your PC on the LAN.
+
+**I tapped "Fork session" but sent nothing — why is there no new session?** That is deliberate: dsh persists a fork immediately and has no delete API, so the app arms the fork instead. A banner appears, and the fork is only created together with your first message; leaving the page leaves nothing behind.
+
+**A subagent is running but the parent looks idle?** It no longer does: rows keep the green dot and show "subagent ×N", and the chat header offers the same entry point.
 
 ## Build from source
 
