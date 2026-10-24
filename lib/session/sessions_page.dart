@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'dsh_client.dart';
 import 'chat_page.dart';
 import 'mux_client.dart';
+import 'session_activity.dart';
 
 /// Session list mirroring the PC sidebar: subagent/child durable summaries
 /// hidden (`origin:'subagent'`, same rule as dsh ui-workspace), archived
@@ -52,7 +53,19 @@ class _SessionsPageState extends State<SessionsPage> {
   void initState() {
     super.initState();
     _rpc = DshRpc(pcOrigin: widget.pcOrigin, cookieHeader: widget.cookieHeader);
+    // Live agent status (including subagent descendants) drives the row dots.
+    SessionActivity.instance.addListener(_onActivity);
     _refresh();
+  }
+
+  @override
+  void dispose() {
+    SessionActivity.instance.removeListener(_onActivity);
+    super.dispose();
+  }
+
+  void _onActivity() {
+    if (mounted) setState(() {});
   }
 
   Future<void> _refresh() async {
@@ -767,7 +780,10 @@ class _SessionRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final running = summary.running;
+    // A parent that delegated to subagents is idle itself, exactly like the PC
+    // sidebar: the row stays "active" while any descendant runs.
+    final children = SessionActivity.instance.runningDescendants(summary.sessionId);
+    final running = summary.running || children > 0;
     return Material(
       color: Colors.white,
       borderRadius: BorderRadius.circular(12),
@@ -819,10 +835,15 @@ class _SessionRow extends StatelessWidget {
               ),
               const SizedBox(height: 3),
               Text(
-                modelText,
+                children > 0 ? '$modelText · 子智能体 ×$children' : modelText,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontSize: 12.5, color: Color(0xFF8A8A8E)),
+                style: TextStyle(
+                  fontSize: 12.5,
+                  color: children > 0
+                      ? const Color(0xFF30A14E)
+                      : const Color(0xFF8A8A8E),
+                ),
               ),
               if (showDivider)
                 Container(height: 0.5, color: const Color(0xFFE5E5EA)),

@@ -81,10 +81,26 @@ class MuxClient {
   }
 
   /// Open the durable follow stream of one session.
-  Stream<MuxEvent> followSession(String sessionId, {int maxMessages = 50}) =>
+  ///
+  /// A subagent is NOT addressable as a plain session: dsh rejects
+  /// `{kind:'session'}` for it with `session/agent-busy` and requires the
+  /// durable parent address (`packages/api/session-controller/src/history.ts`).
+  Stream<MuxEvent> followSession(
+    String sessionId, {
+    int maxMessages = 50,
+    String? parentSessionId,
+    String mode = 'unknown',
+  }) =>
       open('session/follow', {
         'request': {
-          'address': {'kind': 'session', 'sessionId': sessionId},
+          'address': parentSessionId == null
+              ? {'kind': 'session', 'sessionId': sessionId}
+              : {
+                  'kind': 'subagent',
+                  'parentSessionId': parentSessionId,
+                  'childSessionId': sessionId,
+                  'mode': mode,
+                },
           'maxMessages': maxMessages,
           'assistantStream': true,
         },

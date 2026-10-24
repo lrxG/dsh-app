@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
@@ -5,7 +7,11 @@ import 'pairing/scan_page.dart';
 import 'pairing/pair_client.dart';
 import 'pairing/pair_store.dart';
 import 'session/approval_center.dart';
+import 'session/chat_page.dart';
+import 'session/dsh_client.dart';
 import 'session/notify.dart';
+import 'session/power.dart';
+import 'session/session_activity.dart';
 import 'session/sessions_page.dart';
 
 void main() {
@@ -74,7 +80,7 @@ class PairGate extends StatefulWidget {
   State<PairGate> createState() => _PairGateState();
 }
 
-class _PairGateState extends State<PairGate> {
+class _PairGateState extends State<PairGate> with WidgetsBindingObserver {
   LinkPhase _phase = LinkPhase.unpaired;
   PairResult? _result;
 
@@ -88,16 +94,38 @@ class _PairGateState extends State<PairGate> {
   /// One approval dialog at a time; the queue drains as each is answered.
   bool _approvalDialogOpen = false;
 
+  /// Whether the OS already exempts this app from battery optimization.
+  bool? _powerExempt;
+
+  /// A notification tap that arrived before the pairing was restored.
+  String? _pendingOpen;
+  StreamSubscription<String>? _openSub;
+
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _openSub = Notifier.openedSessions.listen(_openSession);
     _restore();
+    _claimPendingNotification();
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _openSub?.cancel();
     ApprovalCenter.instance.removeListener(_maybeShowApproval);
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // Only a foreground app suppresses notifications; everything else is
+    // "in my pocket", which is exactly when the notification matters.
+    SessionActivity.instance.setForeground(state == AppLifecycleState.resumed);
+    // A tap that resumed the app carries no extras after a task restore; the
+    // native side stores the id, and this is where we claim it.
+    if (state == AppLifecycleState.resumed) _claimPendingNotification();
   }
 
   /// Watch the PC's approval waterfall once a pairing exists.
@@ -109,7 +137,70 @@ class _PairGateState extends State<PairGate> {
       pcOrigin: result.pcOrigin,
       cookieHeader: result.cookieHeader!,
     );
+    // Same pairing drives the background completion watcher.
+    SessionActivity.instance.start(
+      pcOrigin: result.pcOrigin,
+      cookieHeader: result.cookieHeader!,
+    );
     _maybeShowApproval();
+  }
+
+  /// Open the conversation a notification tap pointed at.
+  Future<void> _openSession(String sessionId) async {
+    if (sessionId.isEmpty) return;
+    final result = _result;
+    if (result == null || (result.cookieHeader ?? '').isEmpty) {
+      _pendingOpen = sessionId;
+      return;
+    }
+    final activity = SessionActivity.instance;
+    var title = activity.titleOf(sessionId);
+    if (title == null || title.isEmpty) {
+      // Cold start: the activity map has not been primed yet.
+      try {
+        final rows = await DshRpc(
+          pcOrigin: result.pcOrigin,
+          cookieHeader: result.cookieHeader!,
+        ).listSessions();
+        for (final row in rows) {
+          if (row.sessionId == sessionId) {
+            title = row.title;
+            break;
+          }
+        }
+      } catch (_) {
+        // Offline: fall back to the generic label.
+      }
+    }
+    if (!mounted) return;
+    Navigator.of(context, rootNavigator: true).push(
+      MaterialPageRoute(
+        builder: (_) => ChatPage(
+          sessionId: sessionId,
+          title: title ?? '会话',
+          pcOrigin: result.pcOrigin,
+          cookieHeader: result.cookieHeader!,
+          parentSessionId: activity.parentOf(sessionId),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _claimPendingNotification() async {
+    final id = await Notifier.instance.takePending();
+    if (!mounted || id == null || id.isEmpty) return;
+    _openSession(id);
+  }
+
+  Future<void> _loadPowerState() async {
+    final exempt = await PowerSettings.isExempt();
+    if (mounted) setState(() => _powerExempt = exempt);
+  }
+
+  Future<void> _openPowerSettings() async {
+    await PowerSettings.requestExempt();
+    await Future<void>.delayed(const Duration(seconds: 1));
+    await _loadPowerState();
   }
 
   /// iOS-style prompt for the oldest pending approval.
@@ -219,6 +310,12 @@ class _PairGateState extends State<PairGate> {
       _activeOrigin = saved.pcOrigin;
     });
     _watchApprovals(_result!);
+    _loadPowerState();
+    final pending = _pendingOpen;
+    if (pending != null) {
+      _pendingOpen = null;
+      WidgetsBinding.instance.addPostFrameCallback((_) => _openSession(pending));
+    }
   }
 
   Future<void> _scan() async {
@@ -254,6 +351,7 @@ class _PairGateState extends State<PairGate> {
   /// Forget the current PC; switch to another saved one when present.
   Future<void> _unpair() async {
     await ApprovalCenter.instance.stop();
+    await SessionActivity.instance.stop();
     ApprovalCenter.instance.removeListener(_maybeShowApproval);
     final origin = _activeOrigin ?? _result?.pcOrigin;
     if (origin != null && origin.isNotEmpty) {
@@ -464,6 +562,64 @@ class _PairGateState extends State<PairGate> {
                       ),
                     ),
                     child: const Text('进入会话', style: TextStyle(fontSize: 16)),
+                  ),
+                ),
+              ],
+              if (_phase == LinkPhase.paired) ...[
+                const SizedBox(height: 16),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.fromLTRB(14, 11, 6, 11),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        _powerExempt == true
+                            ? Icons.notifications_active_outlined
+                            : Icons.notifications_off_outlined,
+                        size: 18,
+                        color: _powerExempt == true
+                            ? const Color(0xFF30D158)
+                            : const Color(0xFF8E8E93),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              '后台通知',
+                              style: TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w500,
+                                color: Color(0xFF1C1C1E),
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              _powerExempt == true
+                                  ? '任务完成会在后台提醒你'
+                                  : '把省电设为「无限制」，退到后台才收得到完成通知',
+                              style: const TextStyle(
+                                fontSize: 12,
+                                height: 1.3,
+                                color: Color(0xFF8E8E93),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      TextButton(
+                        onPressed: _openPowerSettings,
+                        child: const Text(
+                          '设置',
+                          style: TextStyle(fontSize: 14),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ],

@@ -13,6 +13,7 @@ import 'jobs_page.dart';
 import 'messages.dart';
 import 'mux_client.dart';
 import 'notify.dart';
+import 'session_activity.dart';
 
 /// Chat view of one session: durable snapshot → bubbles, live `event` frames
 /// appended, transient `assistant-stream` chunks rendered as a live bubble.
@@ -25,12 +26,21 @@ class ChatPage extends StatefulWidget {
     required this.title,
     required this.pcOrigin,
     required this.cookieHeader,
+    this.parentSessionId,
+    this.subagentMode = 'unknown',
   });
 
   final String sessionId;
   final String title;
   final String pcOrigin;
   final String cookieHeader;
+
+  /// Set for a subagent conversation: dsh requires the durable parent address
+  /// to open it, and one-shot children are read-only.
+  final String? parentSessionId;
+  final String subagentMode;
+
+  bool get isSubagent => parentSessionId != null;
 
   @override
   State<ChatPage> createState() => _ChatPageState();
@@ -90,16 +100,32 @@ class _ChatPageState extends State<ChatPage> {
   /// stream-end frame plus the durable message echo.
   DateTime? _lastTurnNotify;
 
+  /// Current conversation: starts as [ChatPage.sessionId] and switches to the
+  /// fork's id once the first prompt creates it (see [_forkArmed]).
+  late String _sessionId;
+
+  /// dsh's `session/fork` persists a session immediately, so arming the action
+  /// and forking together with the first prompt is the only way to avoid
+  /// leaving an unused fork on the PC (there is no delete RPC).
+  bool _forkArmed = false;
+
   @override
   void initState() {
     super.initState();
+    _sessionId = widget.sessionId;
     _mux = MuxClient(pcOrigin: widget.pcOrigin, cookieHeader: widget.cookieHeader);
     _rpc = DshRpc(pcOrigin: widget.pcOrigin, cookieHeader: widget.cookieHeader);
     // Send-button tint follows the field content.
     _input.addListener(() {
       if (mounted) setState(() {});
     });
+    SessionActivity.instance.activeSessionId = _sessionId;
+    SessionActivity.instance.addListener(_onActivity);
     _follow(auto: false);
+  }
+
+  void _onActivity() {
+    if (mounted) setState(() {});
   }
 
   /// Full re-dial of the follow stream. Manual taps reset the auto-retry
@@ -129,7 +155,11 @@ class _ChatPageState extends State<ChatPage> {
     final fresh = MuxClient(pcOrigin: widget.pcOrigin, cookieHeader: widget.cookieHeader);
     try {
       await fresh.connect();
-      _sub = fresh.followSession(widget.sessionId).listen(
+      _sub = fresh.followSession(
+        _sessionId,
+        parentSessionId: widget.parentSessionId,
+        mode: widget.subagentMode,
+      ).listen(
         _onFrame,
         onError: _onStreamError,
         onDone: _onClosed,
@@ -149,7 +179,7 @@ class _ChatPageState extends State<ChatPage> {
     try {
       final results = await Future.wait([
         _rpc.modelCatalog().catchError((Object _) => null as ModelCatalogData?),
-        _rpc.sessionModel(widget.sessionId).catchError((Object _) => null as ModelSelection?),
+        _rpc.sessionModel(_sessionId).catchError((Object _) => null as ModelSelection?),
       ]);
       if (!mounted) return;
       setState(() {
@@ -256,7 +286,7 @@ class _ChatPageState extends State<ChatPage> {
       );
       if (picked == null) return;
       final selected = await _rpc.selectModel(
-        widget.sessionId,
+        _sessionId,
         picked.provider,
         picked.model,
         reasoningEffort: picked.effort,
@@ -443,6 +473,8 @@ class _ChatPageState extends State<ChatPage> {
 
   /// System notification when a turn that was running has settled.
   void _notifyTurnDone(String text) {
+    // Looking at the app means the answer is already on screen.
+    if (SessionActivity.instance.isForeground) return;
     final now = DateTime.now();
     if (_lastTurnNotify != null &&
         now.difference(_lastTurnNotify!).inSeconds < 5) {
@@ -455,6 +487,7 @@ class _ChatPageState extends State<ChatPage> {
       body: preview.isEmpty
           ? '会话已空闲'
           : (preview.length > 80 ? '${preview.substring(0, 80)}…' : preview),
+      sessionId: _sessionId,
     );
   }
 
@@ -530,7 +563,7 @@ class _ChatPageState extends State<ChatPage> {
       case 'rename':
         await _rename();
       case 'fork':
-        await _fork();
+        _fork();
       case 'subagents':
         await _openSubagents();
       case 'jobs':
@@ -539,7 +572,7 @@ class _ChatPageState extends State<ChatPage> {
             context,
             MaterialPageRoute(
               builder: (_) => JobsPage(
-                sessionId: widget.sessionId,
+                sessionId: _sessionId,
                 pcOrigin: widget.pcOrigin,
                 cookieHeader: widget.cookieHeader,
               ),
@@ -586,7 +619,7 @@ class _ChatPageState extends State<ChatPage> {
     );
     if (value == null || value.isEmpty) return;
     try {
-      final normalized = await _rpc.renameSession(widget.sessionId, value);
+      final normalized = await _rpc.renameSession(_sessionId, value);
       if (mounted) setState(() => _title = normalized);
     } on RpcError catch (e) {
       if (!mounted) return;
@@ -594,41 +627,27 @@ class _ChatPageState extends State<ChatPage> {
     }
   }
 
-  Future<void> _fork() async {
-    try {
-      final forked = await _rpc.forkSession(widget.sessionId);
-      if (forked == null) {
-        if (mounted) _snack('分叉失败：PC 未返回新会话');
-        return;
-      }
-      if (!mounted) return;
-      await Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (_) => ChatPage(
-            sessionId: forked,
-            title: '$_title（分叉）',
-            pcOrigin: widget.pcOrigin,
-            cookieHeader: widget.cookieHeader,
-          ),
-        ),
-      );
-    } on RpcError catch (e) {
-      if (!mounted) return;
-      _snack('分叉失败：${e.code} ${e.message}');
-    } catch (e) {
-      if (!mounted) return;
-      _snack('网络错误：$e');
+  /// Arm the fork instead of creating it: dsh persists a fork immediately and
+  /// has no delete RPC, so an abandoned fork would linger on the PC forever.
+  /// The session is created together with the first prompt ([_send]).
+  void _fork() {
+    if (widget.isSubagent) return;
+    // dsh forks from a completed turn; a brand-new session has none.
+    if (!_messages.any((m) => m.role == ChatRole.assistant)) {
+      _snack('还没有完成的回合，无法分叉');
+      return;
     }
+    setState(() => _forkArmed = true);
   }
 
-  /// List this session's subagent children (hidden from the main list).
+  /// List this session's subagent children (hidden from the main list). Forks
+  /// also carry lineage but are not subagents, so filter on `origin` here.
   Future<void> _openSubagents() async {
     List<SessionSummary> children;
     try {
       final all = await _rpc.listSessions();
       children = all
-          .where((s) => s.parentSessionId == widget.sessionId)
+          .where((s) => s.origin == 'subagent' && s.parentSessionId == _sessionId)
           .toList()
         ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
     } catch (e) {
@@ -696,6 +715,7 @@ class _ChatPageState extends State<ChatPage> {
                             title: child.title ?? '子任务',
                             pcOrigin: widget.pcOrigin,
                             cookieHeader: widget.cookieHeader,
+                            parentSessionId: _sessionId,
                           ),
                         ),
                       );
@@ -720,7 +740,7 @@ class _ChatPageState extends State<ChatPage> {
   /// Stop the running turn (and its subagent descendants).
   Future<void> _cancelTurn() async {
     try {
-      await _rpc.cancelSession(widget.sessionId);
+      await _rpc.cancelSession(_sessionId);
     } on RpcError catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -846,6 +866,31 @@ class _ChatPageState extends State<ChatPage> {
     setState(() => _sending = true);
     _input.clear();
     try {
+      // The first prompt is what actually creates an armed fork, so leaving
+      // the page without sending leaves no session behind.
+      if (_forkArmed) {
+        String? forked;
+        try {
+          forked = await _rpc.forkSession(_sessionId);
+        } on RpcError catch (e) {
+          _input.text = text;
+          _snack('分叉失败：${e.code} ${e.message}');
+          return;
+        }
+        final id = forked;
+        if (id == null || id.isEmpty) {
+          _input.text = text;
+          _snack('分叉失败：PC 未返回新会话');
+          return;
+        }
+        setState(() {
+          _forkArmed = false;
+          _sessionId = id;
+          _title = '$_title（分叉）';
+        });
+        SessionActivity.instance.activeSessionId = id;
+        await _follow(auto: true);
+      }
       final content = <Map<String, dynamic>>[
         if (text.isNotEmpty) {'type': 'text', 'text': text},
         if (image != null)
@@ -858,7 +903,7 @@ class _ChatPageState extends State<ChatPage> {
       ];
       if (file != null) {
         final receipt = await _rpc.uploadFile(
-          sessionId: widget.sessionId,
+          sessionId: _sessionId,
           name: file.name,
           bytes: await file.readBytes(),
         );
@@ -870,7 +915,7 @@ class _ChatPageState extends State<ChatPage> {
       await _rpc.call('session/prompt', {
         'request': {
           'requestId': newRequestId(),
-          'sessionId': widget.sessionId,
+          'sessionId': _sessionId,
           'mode': _busy ? 'steer' : 'queue',
           'content': content,
         },
@@ -986,6 +1031,10 @@ class _ChatPageState extends State<ChatPage> {
 
   @override
   void dispose() {
+    SessionActivity.instance.removeListener(_onActivity);
+    if (SessionActivity.instance.activeSessionId == _sessionId) {
+      SessionActivity.instance.activeSessionId = null;
+    }
     _retryTimer?.cancel();
     _sub?.cancel();
     _mux.close();
@@ -1091,8 +1140,63 @@ class _ChatPageState extends State<ChatPage> {
                     ),
                   ),
                 ),
+              if (SessionActivity.instance.runningDescendants(_sessionId)
+                  case final running when running > 0) ...[
+                const SizedBox(width: 10),
+                GestureDetector(
+                  onTap: _openSubagents,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const SizedBox(
+                        width: 9,
+                        height: 9,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 1.8,
+                          color: Color(0xFF30D158),
+                        ),
+                      ),
+                      const SizedBox(width: 5),
+                      Text(
+                        '子智能体 ×$running',
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: Color(0xFF30A14E),
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
             ]),
           ),
+          if (_forkArmed)
+            Container(
+              width: double.infinity,
+              color: const Color(0xFFFFF4E0),
+              padding: const EdgeInsets.fromLTRB(16, 7, 12, 7),
+              child: Row(
+                children: [
+                  const Icon(Icons.call_split,
+                      size: 14, color: Color(0xFFB26B00)),
+                  const SizedBox(width: 6),
+                  const Expanded(
+                    child: Text(
+                      '分叉待发 · 发送第一条消息后才会创建新会话',
+                      style: TextStyle(fontSize: 12, color: Color(0xFF8A5A00)),
+                    ),
+                  ),
+                  GestureDetector(
+                    onTap: () => setState(() => _forkArmed = false),
+                    child: const Text(
+                      '取消',
+                      style: TextStyle(fontSize: 12, color: Color(0xFF007AFF)),
+                    ),
+                  ),
+                ],
+              ),
+            ),
           const Divider(height: 1, thickness: 0.5, color: Color(0xFFE5E5EA)),
           Expanded(
             child: bubbles.isEmpty
@@ -1110,7 +1214,20 @@ class _ChatPageState extends State<ChatPage> {
                   ),
           ),
           const Divider(height: 1, thickness: 0.5, color: Color(0xFFE5E5EA)),
-          SafeArea(
+          if (widget.isSubagent)
+            const SafeArea(
+              top: false,
+              child: Padding(
+                padding: EdgeInsets.fromLTRB(16, 12, 16, 14),
+                child: Text(
+                  '子智能体会话 · 只读（由主会话调度）',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 12, color: Color(0xFF8E8E93)),
+                ),
+              ),
+            )
+          else
+            SafeArea(
             top: false,
             child: Container(
               color: const Color(0xFFF9F9F9),
