@@ -32,25 +32,47 @@ flutter build apk --release
 # output: build/app/outputs/flutter-apk/app-release.apk
 ```
 
-## 2. Make dsh listen on your LAN · 让 dsh 监听局域网
+## 2. Get a pairing QR on the PC · 在 PC 上拿到二维码
+
+The phone must reach a **LAN-bound** dsh. The dsh **desktop app** binds `127.0.0.1` and cannot be used for this. Two ways:
+
+手机必须连到一个**绑定局域网地址**的 dsh；**桌面应用只监听 127.0.0.1，不能用**。两种方式：
+
+**A. Easiest — PC companion from the `plugin` branch · 最省事：`plugin` 分支里的陪伴进程**
+
+```powershell
+git clone -b plugin https://github.com/lrxG/dsh-companion
+cd dsh-companion/companion
+npm install
+npm start
+```
+
+It starts `dsh web --host <LAN-IP> --port 3080` and prints the QR (also `pair-qr.png` / `pair-url.txt`). Scan that QR.
+
+它会以局域网地址启动 dsh 并在终端打印二维码（同时写出 `pair-qr.png` / `pair-url.txt`），直接扫即可。
+
+**B. QR inside dsh settings — install the plugin · 在 dsh 设置里显示二维码（装插件）**
+
+Install the plugin from the `plugin` branch, then run dsh on the LAN:
+
+安装 `plugin` 分支里的插件，然后以局域网地址启动：
 
 ```powershell
 dsh web --host <PC-IP> --port 3080
 ```
 
+Open **dsh → Settings → 扫码配对** and scan. No plugin? Generate a QR from the printed URL with any QR tool, or paste the URL into the app via **「手动粘贴配对链接」**.
+
+打开 **dsh → 设置 →「扫码配对」** 扫码；不装插件也可以：用任意工具把打印出的 URL 生成二维码，或在 App 里「手动粘贴配对链接」。
+
 dsh prints `http://<PC-IP>:3080/?token=…` — exactly what the QR encodes. The token rotates on restart, but the phone keeps a 30-day signed cookie, so **restarts do not require re-scanning**.
 
 dsh 启动时打印的 `http://<PC-IP>:3080/?token=…` 就是二维码内容。token 每次重启都会变，但手机保存的是 30 天 cookie，**重启后不用重新扫码**。
 
-## 3. Show the QR inside dsh (recommended) · 在 dsh 设置里显示二维码（推荐）
+## 3. Scan · 扫码
 
-Install the plugin from the **`plugin` branch** (that branch's README has the steps), then open **dsh → Settings → 扫码配对 (Pair)** and scan with the app.
-
-从 **`plugin` 分支** 安装插件（步骤见该分支 README），打开 **dsh → 设置 →「扫码配对」**，用 App 扫码。
-
-No plugin? Generate a QR from the printed URL with any QR tool, or paste the URL into the app via **「手动粘贴配对链接」**.
-
-不想装插件：用任意二维码工具为启动 URL 生成二维码，或在 App 里「手动粘贴配对链接」直接粘贴。
+App →「扫码配对」→ scan; or「手动粘贴配对链接」paste the URL. Then open sessions.
+App →「扫码配对」→ 扫描；或「手动粘贴配对链接」粘贴。成功后进入会话。
 
 ## 4. Done · 完成
 
