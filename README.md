@@ -1,6 +1,6 @@
 # dsh-lanbuddy-pair · dsh pairing QR page
 
-**English** | [中文](#中文)
+**English** · 中文（同一页面双语）
 
 A tiny dsh plugin that adds **Settings → 扫码配对 (Pair)** showing the live pairing QR code. The Android client (**[DSH Companion](https://github.com/lrxG/dsh-companion)** — see the `app` branch / Releases) scans it to connect to this PC over the LAN.
 
