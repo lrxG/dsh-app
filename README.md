@@ -1,66 +1,66 @@
-# dsh pairing plugin
+# dsh 扫码配对插件
 
-**English** | [简体中文](README.zh-CN.md)
+**简体中文** | [English](README.en.md)
 
 <p>
-  <a href="https://github.com/lrxG/dsh-app/releases/latest"><img alt="app" src="https://img.shields.io/badge/app-Download%20APK-007AFF"></a>
+  <a href="https://github.com/lrxG/dsh-app/releases/latest"><img alt="app" src="https://img.shields.io/badge/app-%E4%B8%8B%E8%BD%BD%20APK-007AFF"></a>
   <img alt="dsh" src="https://img.shields.io/badge/dsh-0.2.x-4D6BFE">
   <img alt="license" src="https://img.shields.io/github/license/lrxG/dsh-app">
 </p>
 
-Adds **dsh → Settings → 扫码配对** with the live pairing QR. Scan it with the Android app to connect over the LAN — including the dsh **Desktop app**, which normally only listens on `127.0.0.1`.
+在 **dsh → 设置 →「扫码配对」** 里显示可扫的配对二维码。用安卓 App 扫码即可通过局域网连接——**桌面应用**（平时只监听 `127.0.0.1`）也可以。
 
-📱 **Android app (APK): [Releases](https://github.com/lrxG/dsh-app/releases/latest)** — app source: [`main` branch](https://github.com/lrxG/dsh-app)
+📱 **安卓 App（APK）：[Releases](https://github.com/lrxG/dsh-app/releases/latest)** —— App 源码：[`main` 分支](https://github.com/lrxG/dsh-app)
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/lrxG/dsh-app/main/docs/images/paired.jpg" alt="Paired" width="280">
+  <img src="https://raw.githubusercontent.com/lrxG/dsh-app/main/docs/images/paired.jpg" alt="配对成功" width="280">
 </p>
 
-## Install · Use
+## 安装与使用
 
-**1. Install the plugin**
+**1. 安装插件**
 
 ```powershell
 git clone -b plugin https://github.com/lrxG/dsh-app dsh-plugin
 ```
 
-- **dsh → Plugins → Add plugin** → paste the absolute path of `dsh-plugin` → restart dsh
-- or wire it manually (see below)
+- **dsh → 插件 → 添加插件** → 粘贴 `dsh-plugin` 的绝对路径 → 重启 dsh；
+- 或按下面的「手动接线」写入 profile。
 
-Requires `pnpm` on PATH. The package declares `dsh.bundle`, so the plugin manager accepts it.
+需要 PATH 里有 `pnpm`；本包声明了 `dsh.bundle`，插件管理器才会安装。
 
-**2. Pair**
+**2. 配对**
 
-1. Open **dsh → Settings → 扫码配对**
-2. Scan the QR with the [app](https://github.com/lrxG/dsh-app/releases/latest), or paste the URL under it
-3. Done — sessions and models sync in real time
+1. 打开 **dsh → 设置 →「扫码配对」**；
+2. 用 [App](https://github.com/lrxG/dsh-app/releases/latest) 扫二维码，或粘贴二维码下方的链接；
+3. 完成，会话与模型实时同步。
 
-The token rotates on every dsh start, but the app keeps a 30-day signed cookie, so restarts do not require re-scanning.
+token 每次启动轮换，但 App 保存 30 天签名 cookie，**重启无需重扫**。
 
-## What it does
+## 它做了什么
 
-- **Settings page** with the pairing QR (`settings.section`)
-- `GET /lanbuddy/pair` — standalone QR page
-- `GET /lanbuddy/pair/qr.svg` — QR image (`no-store`)
-- `GET /lanbuddy/pair/info` — `{url, host, port, loopback, lan, gateway}`
-- `POST /lanbuddy/devices/revoke` — rotate the signing secret (all phones re-pair after restart)
-- **LAN gateway** for loopback-only instances
+- **设置页**显示配对二维码（`settings.section`）
+- `GET /lanbuddy/pair` —— 独立配对页
+- `GET /lanbuddy/pair/qr.svg` —— 二维码图片（`no-store`）
+- `GET /lanbuddy/pair/info` —— `{url, host, port, loopback, lan, gateway}`
+- `POST /lanbuddy/devices/revoke` —— 解除所有设备（轮换签名密钥，重启生效）
+- 给回环实例用的**局域网网关**
 
-All routes pass `ctx.connection.admit()`, the same Host/cookie fence as `/api`; anonymous requests get **401**.
+所有路由都过 `ctx.connection.admit()`（与 `/api` 同一套 Host/cookie 围栏），匿名请求一律 **401**。
 
-## How it works
+## 原理
 
-The QR is built from `ctx.connection.authenticatedUrl()`, i.e. the same live launch token dsh prints at startup — never stale.
+二维码取自 `ctx.connection.authenticatedUrl()`——就是 dsh 启动时打印的当前 launch token，永远是最新有效的。
 
-### LAN gateway
+### 局域网网关
 
-When dsh only listens on loopback (the Desktop app), the plugin binds `<LAN-IP>:3080` (next free port when taken) and proxies **HTTP + WebSocket** to the local dsh, rewriting `Host`/`Origin` to `localhost`. The port-less loopback authority keeps cookies valid across desktop restarts.
+当 dsh 只监听回环（桌面应用）时，插件在 `<局域网IP>:3080` 起监听（占用则自动顺延），把 **HTTP 与 WebSocket** 转发给本机 dsh，并把 `Host`/`Origin` 重写为 `localhost`；无端口的回环 authority 让 cookie 在桌面应用重启后仍有效。
 
-- Only starts for loopback-only instances
-- `lanGateway: false` disables it; `lanHost` / `lanPort` override the bind
-- Security is the same as `--host`: the full dsh surface is exposed to the LAN, gated by token/cookie
+- 仅对回环实例启动；
+- `lanGateway: false` 可关闭，`lanHost` / `lanPort` 可改地址端口；
+- 安全性等同 `--host`：完整 dsh 暴露到局域网，但受 token/cookie 保护。
 
-## Manual wiring
+## 手动接线
 
 ```powershell
 New-Item -ItemType Junction `
@@ -75,28 +75,28 @@ New-Item -ItemType Junction `
       name: "dsh-lanbuddy-pair"
 ```
 
-Restart dsh.
+然后重启 dsh。
 
-## Security
+## 安全
 
-- No new port besides the gateway
-- QR/token served only to an authenticated dsh session
-- `cache-control: no-store` everywhere
-- “Revoke all devices” deletes the `client-connection/browser-session` credential (restart to apply)
+- 除网关外不新增端口；
+- 二维码/token 只提供给已登录的 dsh 会话；
+- 所有路由 `cache-control: no-store`；
+- 「解除所有设备」会删除 `client-connection/browser-session` 凭据（重启生效）。
 
-## Troubleshooting
+## 常见问题
 
-| Symptom | Fix |
+| 现象 | 处理 |
 |---|---|
-| No settings entry | Plugin not loaded — check dsh logs, restart |
-| Phone: connection refused | Scanned a loopback URL or gateway not running — restart dsh |
-| `not-a-bundle` | Old package without `dsh.bundle`; use this branch |
-| `EADDRINUSE` | Another instance holds the port; the gateway falls back automatically |
+| 设置里没有入口 | 插件未加载——查看 dsh 日志并重启 |
+| 手机提示连接被拒绝 | 扫到了回环地址，或网关未启动——重启 dsh |
+| `not-a-bundle` | 旧包缺少 `dsh.bundle`，使用本分支版本 |
+| `EADDRINUSE` | 端口被其他实例占用，网关会自动顺延 |
 
-## Uninstall
+## 卸载
 
-Remove the bundle in the plugin manager (or delete the patch entry + junction) and restart dsh.
+在插件管理器里删除，或删除 patch 条目与联接，然后重启 dsh。
 
-## License
+## 许可证
 
 MIT
