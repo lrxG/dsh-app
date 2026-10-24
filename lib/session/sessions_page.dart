@@ -123,7 +123,18 @@ class _SessionsPageState extends State<SessionsPage> {
   /// Workspace lands in「未分组」, so pick one whenever the PC lists any.
   Future<void> _create() async {
     if (_creating) return;
-    final workspaces = _workspaces?.items ?? const <WorkspaceInfo>[];
+    // A tap during the first refresh would otherwise see an empty registry and
+    // create an ungrouped session; wait for the Workspace snapshot first.
+    var workspaces = _workspaces?.items ?? const <WorkspaceInfo>[];
+    if (_workspaces == null) {
+      setState(() => _creating = true);
+      final snapshot = await _loadWorkspaces();
+      if (!mounted) return;
+      if (snapshot != null) _workspaces = snapshot;
+      setState(() => _creating = false);
+      if (!mounted) return;
+      workspaces = snapshot?.items ?? const <WorkspaceInfo>[];
+    }
     String? workspaceId;
     if (workspaces.length == 1) {
       workspaceId = workspaces.first.workspaceId;
@@ -131,7 +142,6 @@ class _SessionsPageState extends State<SessionsPage> {
       workspaceId = await _pickWorkspace(workspaces);
       if (!mounted) return;
       if (workspaceId == null) return; // cancelled
-      if (workspaceId.isEmpty) workspaceId = null; // explicit 「不分组」
     }
     setState(() => _creating = true);
     try {
@@ -562,8 +572,10 @@ class _SessionsPageState extends State<SessionsPage> {
     return s.model == null ? '$label · 默认' : label;
   }
 
-  /// Sheet to choose the Workspace for a new session.
-  /// Returns a workspace id, `''` for「不分组」, or null when cancelled.
+  /// Sheet to choose the Workspace for a new session. Only real workspaces are
+  /// offered: a session's cwd must equal the workspace path, and creating
+  /// without one lands in dsh's install directory (useless for project work).
+  /// Returns a workspace id, or null when cancelled.
   Future<String?> _pickWorkspace(List<WorkspaceInfo> workspaces) {
     return showModalBottomSheet<String>(
       context: context,
@@ -595,10 +607,6 @@ class _SessionsPageState extends State<SessionsPage> {
                   onTap: () => Navigator.pop(ctx, workspace.workspaceId),
                 ),
               const Divider(height: 0.5, thickness: 0.5, color: Color(0xFFE5E5EA)),
-              _SheetAction(
-                label: '不分组（默认目录）',
-                onTap: () => Navigator.pop(ctx, ''),
-              ),
               _SheetAction(
                 label: '取消',
                 bold: true,
