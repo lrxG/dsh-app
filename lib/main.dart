@@ -1,3 +1,4 @@
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
 import 'pairing/scan_page.dart';
@@ -23,13 +24,21 @@ class DshApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'dsh app',
+      title: 'DeepSeek Harness',
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(
           seedColor: const Color(0xFF007AFF), // iOS blue
         ).copyWith(surface: const Color(0xFFF2F2F7)),
         useMaterial3: true,
         scaffoldBackgroundColor: const Color(0xFFF2F2F7),
+        // Full-screen gesture back on Android otherwise previews the predictive
+        // "shrink" immediately (feels oversensitive). Slide like iOS instead.
+        pageTransitionsTheme: PageTransitionsTheme(
+          builders: {
+            TargetPlatform.android: CupertinoPageTransitionsBuilder(),
+            TargetPlatform.iOS: CupertinoPageTransitionsBuilder(),
+          },
+        ),
         appBarTheme: const AppBarTheme(
           backgroundColor: Color(0xFFF2F2F7),
           surfaceTintColor: Colors.transparent,
@@ -282,7 +291,7 @@ class _PairGateState extends State<PairGate> {
     };
     return Scaffold(
       backgroundColor: const Color(0xFFF2F2F7),
-      appBar: AppBar(title: const Text('dsh app')),
+      appBar: AppBar(title: const Text('DeepSeek Harness')),
       body: Center(
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 32),

@@ -6,7 +6,7 @@ import 'package:lan_buddy/pairing/pair_client.dart';
 void main() {
   testWidgets('pair gate renders launch state', (tester) async {
     await tester.pumpWidget(const DshApp());
-    expect(find.text('dsh app'), findsOneWidget);
+    expect(find.text('DeepSeek Harness'), findsOneWidget);
     expect(find.text('连接你的 PC'), findsOneWidget);
     expect(find.text('扫码配对'), findsOneWidget);
   });

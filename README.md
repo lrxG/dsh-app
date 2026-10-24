@@ -1,4 +1,4 @@
-# dsh app
+# DeepSeek Harness
 
 **English · 中文（同一页面双语）**
 
@@ -10,7 +10,7 @@ Android client for **DeepSeek Harness (dsh)**: scan a QR from the dsh **pairing 
 > The dsh plugin lives on the **`plugin` branch** · dsh 插件在 **`plugin` 分支**。
 > Ready-to-install APK is in **Releases** · 安装包在 **Releases**。
 
-<p align="center"><img src="docs/images/paired.jpg" alt="dsh app — paired with the PC" width="320"></p>
+<p align="center"><img src="docs/images/paired.jpg" alt="DeepSeek Harness — paired with the PC" width="320"></p>
 
 Keywords: DeepSeek Harness, dsh, Android, Flutter, LAN, QR pairing, mobile client, self-hosted.
 
