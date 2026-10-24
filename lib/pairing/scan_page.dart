@@ -4,7 +4,7 @@ import 'package:mobile_scanner/mobile_scanner.dart';
 /// Full-screen QR scanner. Returns the scanned pairing URL to the caller.
 ///
 /// Any http(s) URL carrying a `token` query parameter is accepted: the
-/// companion prints `/connect?token=…` (v2 grant) while the dsh plugin and
+/// dsh CLI prints `/connect?token=…` (v2 grant) while the dsh plugin and
 /// the v1 flow print `/?token=…`. PairClient normalizes either shape.
 class ScanPage extends StatefulWidget {
   const ScanPage({super.key});
@@ -38,7 +38,7 @@ class _ScanPageState extends State<ScanPage> {
           const Padding(
             padding: EdgeInsets.all(24),
             child: Text(
-              '在 PC 上打开 dsh → 设置 →「扫码配对」，或查看陪伴进程窗口的二维码',
+              '在 PC 上打开 dsh → 设置 →「扫码配对」，用手机扫描二维码',
               textAlign: TextAlign.center,
               style: TextStyle(color: Colors.white, shadows: [
                 Shadow(blurRadius: 8, color: Colors.black),
@@ -53,7 +53,7 @@ class _ScanPageState extends State<ScanPage> {
 
 /// The pairing URL a scanned payload may carry.
 ///
-/// Both shapes are valid: the companion prints `/connect?token=…` (v2 grant)
+/// Both shapes are valid: the dsh CLI prints `/connect?token=…` (v2 grant)
 /// and the dsh plugin / v1 flow prints `/?token=…`. Only the scheme and a
 /// non-empty `token` parameter matter — PairClient normalizes the rest.
 Uri? pairingUriFrom(String? raw) {

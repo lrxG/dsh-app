@@ -90,7 +90,7 @@ Cookie: dsh-auth-<sig>=<value>
 ## LanBuddy PC↔手机 时序
 
 ```
-pc-host spawn dsh web --host <LAN_IP>
+dsh web --host <LAN_IP>
         ↓ stdout 行 "dsh web: http://<host>:<port>/?token=T"
 取 T → pairURL = { scheme}://{LAN_IP}:{port}/connect?token=T&interactions=answer
         ↓ 屏显二维码

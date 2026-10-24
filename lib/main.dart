@@ -11,19 +11,19 @@ void main() {
   WidgetsFlutterBinding.ensureInitialized();
   // Best-effort: prompt for the notification permission and create the channel.
   Notifier.instance.init();
-  runApp(const DshCompanionApp());
+  runApp(const DshApp());
 }
 
 /// App states, driven by the outcome of the /connect exchange.
 enum LinkPhase { unpaired, pairing, paired, failed }
 
-class DshCompanionApp extends StatelessWidget {
-  const DshCompanionApp({super.key});
+class DshApp extends StatelessWidget {
+  const DshApp({super.key});
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'DeepSeek Harness',
+      title: 'dsh app',
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(
           seedColor: const Color(0xFF007AFF), // iOS blue
@@ -268,7 +268,7 @@ class _PairGateState extends State<PairGate> {
   @override
   Widget build(BuildContext context) {
     final status = switch (_phase) {
-      LinkPhase.unpaired => '连接你的 PC 伴侣',
+      LinkPhase.unpaired => '连接你的 PC',
       LinkPhase.pairing => '配对中…',
       LinkPhase.failed => '配对失败',
       LinkPhase.paired => '已与 PC 绑定',
@@ -282,7 +282,7 @@ class _PairGateState extends State<PairGate> {
     };
     return Scaffold(
       backgroundColor: const Color(0xFFF2F2F7),
-      appBar: AppBar(title: const Text('DeepSeek Harness')),
+      appBar: AppBar(title: const Text('dsh app')),
       body: Center(
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 32),

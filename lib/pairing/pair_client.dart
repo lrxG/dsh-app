@@ -41,7 +41,7 @@ class PairResult {
 /// `admit` maps it onto the always-live `browserPeer` (owner principal), with
 /// the signing secret persisted across dsh restarts. Result: RPC + mux
 /// survive both dsh restarts and socket drops with the same cookie, which is
-/// what the companion app needs.
+/// what the phone app needs.
 class PairClient {
   PairClient() : dio = Dio(BaseOptions(
     followRedirects: false,

@@ -8,7 +8,7 @@ void main() {
     expect(uri!.queryParameters['token'], 'pw-abc');
   });
 
-  test('accepts the companion /connect grant', () {
+  test('accepts the dsh CLI /connect grant', () {
     final uri = pairingUriFrom(
       'http://192.168.1.10:3080/connect?token=pw-abc&interactions=answer',
     );
