@@ -13,8 +13,10 @@
 📱 **安卓 App（APK）：[Releases](https://github.com/lrxG/dsh-app/releases/latest)** —— App 源码：[`main` 分支](https://github.com/lrxG/dsh-app)
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/lrxG/dsh-app/main/docs/images/paired.jpg" alt="配对成功" width="280">
+  <img src="docs/images/settings-qr.png" alt="装好插件后：dsh → 设置 →「扫码配对」" width="560">
 </p>
+
+<p align="center"><sub>装好插件、重启 dsh 后：<b>dsh → 设置 →「扫码配对」</b>，二维码就在这里</sub></p>
 
 ## 安装与使用
 

@@ -13,8 +13,10 @@ Adds **dsh → Settings → 扫码配对** with the live pairing QR. Scan it wit
 📱 **Android app (APK): [Releases](https://github.com/lrxG/dsh-app/releases/latest)** — app source: [`main` branch](https://github.com/lrxG/dsh-app)
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/lrxG/dsh-app/main/docs/images/paired.jpg" alt="Paired" width="280">
+  <img src="docs/images/settings-qr.png" alt="After installing the plugin: dsh → Settings → 扫码配对" width="560">
 </p>
+
+<p align="center"><sub>Once the plugin is installed and dsh restarted: <b>dsh → Settings → 扫码配对</b> — the QR lives here</sub></p>
 
 ## Install · Use
 
