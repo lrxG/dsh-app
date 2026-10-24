@@ -1,6 +1,6 @@
 # DeepSeek Harness · dsh app
 
-**English** | [简体中文](README.zh-CN.md)
+**简体中文** | [English](README.en.md)
 
 <p>
   <img alt="platform" src="https://img.shields.io/badge/platform-Android-3ddc84">
@@ -9,84 +9,84 @@
   <img alt="license" src="https://img.shields.io/github/license/lrxG/dsh-app">
 </p>
 
-Android client for **DeepSeek Harness (dsh)**. Pair once by scanning a QR from the dsh **pairing plugin**, then read and continue your sessions from the phone — over your own LAN, with no cloud relay and no account.
+**DeepSeek Harness (dsh)** 的 Android 客户端。用 dsh **配对插件**显示的二维码扫一次，就能在手机上查看并续聊会话——局域网直连，无云端中转、无需账号。
 
 <p align="center">
-  <img src="docs/images/paired.jpg" alt="Paired with the PC" width="300">
-  <img src="docs/images/sessions.jpg" alt="Session list with per-session models" width="300">
+  <img src="docs/images/paired.jpg" alt="配对成功" width="300">
+  <img src="docs/images/sessions.jpg" alt="会话列表（每行显示所用模型）" width="300">
 </p>
 
-## Install & run · 3 steps
+## 安装与使用 · 三步
 
-1. **Install the app** — download `dsh-app-release.apk` from [**Releases**](../../releases/latest) (Android 8+).
-2. **Install the dsh plugin** — on the PC:
+1. **装 App** —— 到 [**Releases**](../../releases/latest) 下载 `dsh-app-release.apk`（Android 8+）安装。
+2. **装 dsh 插件** —— 在 PC 上：
    ```powershell
    git clone -b plugin https://github.com/lrxG/dsh-app dsh-plugin
    ```
-   Then **dsh → Plugins → Add plugin** → paste the absolute path of `dsh-plugin` → restart dsh. (Requires `pnpm`; the package declares `dsh.bundle`.)
-3. **Pair** — open **dsh → Settings → 扫码配对**, scan the QR with the app. Or paste the URL under the QR via **手动粘贴配对链接**.
+   然后 **dsh → 插件 → 添加插件**，粘贴 `dsh-plugin` 的绝对路径，按提示重启 dsh。（需要 `pnpm`；本包声明了 `dsh.bundle`。）
+3. **配对** —— 打开 **dsh → 设置 →「扫码配对」**，用 App 扫二维码；也可以点「手动粘贴配对链接」粘贴二维码下方的链接。
 
-Done. Sessions, models and messages sync from the PC; you can keep chatting from the phone.
+完成。会话、模型、消息与 PC 实时同步，手机上可以直接续聊。
 
-> The dsh **Desktop app** only listens on `127.0.0.1`. The plugin's built-in **LAN gateway** exposes it to the phone automatically — no extra launcher, no `--host` flag.
+> dsh **桌面应用**只监听 `127.0.0.1`。插件内置的**局域网网关**会自动把它开放给手机——不需要额外启动器，也不用加 `--host` 参数。
 
-## What you get
+## 能做什么
 
 | | |
 |---|---|
-| **Sessions** | Same workspace groups as the PC · archive/restore · pin · rename · search (name + content) · subagents · background jobs |
-| **Chat** | Streaming replies · reasoning fold · tool-call chips · stop turn · image & file attachments |
-| **Models** | Reads the PC catalog · two-level picker (model → effort) · each row shows the model it uses · writes back to the PC |
-| **Interaction** | Approval prompts (allow once / reject) · system notifications for approvals and finished answers |
-| **Devices** | Remember multiple PCs and switch with one tap |
+| **会话** | 与 PC 工作区分组一致 · 归档/恢复 · 置顶 · 重命名 · 搜索（名称 + 内容）· 子任务 · 后台任务 |
+| **聊天** | 流式回复 · 思考过程折叠 · 工具调用芯片 · 停止当前轮次 · 图片/文件附件 |
+| **模型** | 读取 PC 模型目录 · 两级选择（模型 → 思考深度）· 每行显示会话所用模型 · 选择写回 PC |
+| **交互** | 审批弹窗（允许一次 / 拒绝）· 审批与回答完成的系统通知 |
+| **多设备** | 保存多台 PC 并一键切换 |
 
-## Where things live
+## 东西在哪
 
-| Content | Location |
+| 内容 | 位置 |
 |---|---|
-| Android APK (recommended) | [**Releases**](../../releases/latest) |
-| App source | this `main` branch (Flutter project at the repo root) |
-| dsh pairing plugin | [`plugin` branch](../../tree/plugin) |
-| Protocol notes | [`docs/PROTOCOL.md`](docs/PROTOCOL.md) |
+| Android 安装包（推荐） | [**Releases**](../../releases/latest) |
+| App 源码 | 本 `main` 分支（根目录即 Flutter 工程） |
+| dsh 配对插件 | [`plugin` 分支](../../tree/plugin) |
+| 协议笔记 | [`docs/PROTOCOL.md`](docs/PROTOCOL.md) |
 
-## How it works
+## 原理
 
 ```
-┌──────────── PC ────────────┐                 ┌──────── phone ────────┐
-│ dsh (desktop app or CLI)   │                 │  DeepSeek Harness app │
-│  ├─ Settings → QR (plugin) │◄── ① scan ──────│                       │
+┌──────────── PC ────────────┐                 ┌──────── 手机 ────────┐
+│ dsh（桌面应用或 CLI）       │                 │  DeepSeek Harness App │
+│  ├─ 设置 → 二维码（插件）   │◄── ① 扫码 ──────│                       │
 │  ├─ /api  RPC (HTTP)       │◄── ② RPC ───────│  dsh-auth cookie      │
-│  └─ /api/remote.mux  (WS)  │◄── ③ streaming ─│  (30 days)            │
-│  [plugin LAN gateway]      │                 │                       │
-│   LAN IP:3080 → 127.0.0.1  │                 │                       │
+│  └─ /api/remote.mux  (WS)  │◄── ③ 流式帧 ────│  （30 天）            │
+│  [插件局域网网关]           │                 │                       │
+│   局域网IP:3080 → 127.0.0.1 │                 │                       │
 └────────────────────────────┘                 └───────────────────────┘
 ```
 
-- The plugin renders the **live launch token** (`connection.authenticatedUrl`) as a QR — always current.
-- The app exchanges that one-time token for a **signed HttpOnly cookie** (30 days). All later RPC / WebSocket calls use only the cookie.
-- The signing secret lives on disk, so **restarting dsh or the PC does not require re-scanning**.
-- For loopback-only instances the plugin starts a **LAN gateway** (`<LAN-IP>:3080`) that proxies HTTP + WebSocket to the local dsh, rewriting `Host`/`Origin` to `localhost`. dsh still applies its own trust fence and cookie checks.
+- 插件把 dsh 的**当前 launch token**（`connection.authenticatedUrl`）画成二维码，永远是最新有效的；
+- App 用这个一次性 token 换一枚**签名 HttpOnly cookie**（30 天），之后所有 RPC / WebSocket 只带 cookie；
+- 签名密钥落盘，**重启 dsh 或重启 PC 都不用重新扫码**；
+- dsh 只监听回环时，插件自动开一个**局域网网关**（`<局域网IP>:3080`）把 HTTP/WebSocket 转发给本机 dsh，并把 `Host`/`Origin` 重写为 `localhost`；鉴权仍由 dsh 自己完成。
 
-## Security
+## 安全
 
-- LAN only; no relay, no telemetry.
-- QR token: 256-bit random per process, rotates on restart.
-- Cookie: signed by a durable PC secret, `HttpOnly`, `SameSite=Strict`, 30 days.
-- Every data route passes dsh's `connection.admit()`; anonymous requests get **401**.
-- The plugin page can **revoke all devices** (rotates the signing secret).
-- Tip: give the PC a static DHCP lease so its IP (and the cookie) stays valid.
+- 仅局域网直连，无中转、无遥测。
+- 二维码 token：每个进程 256-bit 随机，重启轮换。
+- cookie：由 PC 本地持久密钥签名，`HttpOnly`、`SameSite=Strict`，30 天。
+- 所有数据路由都过 dsh 的 `connection.admit()`，匿名请求一律 **401**。
+- 插件页可**解除所有设备**（轮换签名密钥）。
+- 建议给 PC 固定 DHCP 租约，避免 IP 变化导致 cookie 失效。
 
-## FAQ
+## 常见问题
 
-**Phone says “connection refused”.** The plugin must be installed and dsh restarted (the gateway only runs with the plugin). On the PC, `http://<PC-IP>:3080/` returning **401** means the gateway is up.
+**手机提示「连接被拒绝」**：确认插件已安装且 dsh 已重启（网关由插件启动）。在 PC 上访问 `http://<局域网IP>:3080/` 返回 **401** 说明网关正常。
 
-**No QR / warning in dsh settings?** The plugin did not load or the gateway could not bind a port. Restart dsh and check its log for `lanbuddy-pair`.
+**设置里没有二维码/显示警告**：插件没加载或端口全被占用。重启 dsh，并在日志里搜 `lanbuddy-pair`。
 
-**Do I re-scan after a reboot?** No. Only re-scan if the cookie expired (30 days), the PC's IP changed, or you used “revoke all devices”.
+**重启后要重新扫码吗**：不用。只有 cookie 过期（30 天）、PC 的 IP 变了、或点了「解除所有设备」才需要重扫。
 
-**Is my data uploaded anywhere?** No. The app only talks to your PC on the LAN.
+**数据会上传吗**：不会。App 只连你自己的 PC。
 
-## Build from source
+## 自行构建
 
 ```powershell
 git clone https://github.com/lrxG/dsh-app
@@ -98,6 +98,6 @@ flutter build apk --release
 # build/app/outputs/flutter-apk/app-release.apk
 ```
 
-## License
+## 许可证
 
-MIT — see [LICENSE](LICENSE).
+MIT，见 [LICENSE](LICENSE)。

@@ -118,30 +118,52 @@ class _SessionsPageState extends State<SessionsPage> {
     }
   }
 
-  /// `session/create` — reuse the newest blank session like the PC does
-  /// ("reuse-or-create its blank session", dsh ui-workspace), then open chat.
+  /// `session/create` in a Workspace (like the PC's New Session), reusing that
+  /// Workspace's newest blank, then open chat. A session created without a
+  /// Workspace lands in「未分组」, so pick one whenever the PC lists any.
   Future<void> _create() async {
     if (_creating) return;
+    final workspaces = _workspaces?.items ?? const <WorkspaceInfo>[];
+    String? workspaceId;
+    if (workspaces.length == 1) {
+      workspaceId = workspaces.first.workspaceId;
+    } else if (workspaces.length > 1) {
+      workspaceId = await _pickWorkspace(workspaces);
+      if (!mounted) return;
+      if (workspaceId == null) return; // cancelled
+      if (workspaceId.isEmpty) workspaceId = null; // explicit 「不分组」
+    }
     setState(() => _creating = true);
     try {
-      // Creation reuses the newest blank (like the PC's New Session), even
-      // though blanks are hidden from the list.
+      // Reuse only a blank that belongs to the target Workspace (the Host's
+      // reuse gate requires membership); otherwise create a fresh one there.
+      final memberIds = workspaceId == null
+          ? null
+          : workspaces
+              .firstWhere((w) => w.workspaceId == workspaceId)
+              .sessionIds
+              .toSet();
       SessionSummary? blankRow;
       for (final s in _allItems) {
         if (!s.blank) continue;
+        if (memberIds != null && !memberIds.contains(s.sessionId)) continue;
         if (blankRow == null || s.updatedAt > blankRow.updatedAt) blankRow = s;
       }
-      final request = <String, dynamic>{};
-      if (blankRow != null) request['sessionId'] = blankRow.sessionId;
+      final request = <String, dynamic>{
+        'workspaceId': ?workspaceId,
+        if (blankRow != null) 'sessionId': blankRow.sessionId,
+      };
       Map? value;
       try {
         value = await _rpc.call('session/create', {'request': request}) as Map?;
       } on RpcError {
-        // The blank may have become unusable (archived elsewhere, workspace
-        // changed). Never fail the tap: create a fresh session instead.
+        // The blank may have become unusable (archived elsewhere, membership
+        // changed). Never fail the tap: create fresh in the same Workspace.
         if (request.isEmpty) rethrow;
         value = await _rpc.call('session/create', {
-          'request': <String, dynamic>{},
+          'request': <String, dynamic>{
+            'workspaceId': ?workspaceId,
+          },
         }) as Map?;
       }
       final sessionId = value is Map ? '${value['sessionId']}' : '';
@@ -538,6 +560,55 @@ class _SessionsPageState extends State<SessionsPage> {
     if (selection == null) return '模型未配置';
     final label = _catalog?.displayName(selection) ?? selection.model;
     return s.model == null ? '$label · 默认' : label;
+  }
+
+  /// Sheet to choose the Workspace for a new session.
+  /// Returns a workspace id, `''` for「不分组」, or null when cancelled.
+  Future<String?> _pickWorkspace(List<WorkspaceInfo> workspaces) {
+    return showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => SafeArea(
+        child: Container(
+          margin: const EdgeInsets.fromLTRB(12, 0, 12, 10),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(14),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Padding(
+                padding: EdgeInsets.fromLTRB(16, 14, 16, 6),
+                child: Text(
+                  '新建到哪个工作区？',
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: Color(0xFF6D6D72),
+                  ),
+                ),
+              ),
+              for (final workspace in workspaces)
+                _SheetAction(
+                  label: workspace.title,
+                  onTap: () => Navigator.pop(ctx, workspace.workspaceId),
+                ),
+              const Divider(height: 0.5, thickness: 0.5, color: Color(0xFFE5E5EA)),
+              _SheetAction(
+                label: '不分组（默认目录）',
+                onTap: () => Navigator.pop(ctx, ''),
+              ),
+              _SheetAction(
+                label: '取消',
+                bold: true,
+                onTap: () => Navigator.pop(ctx),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   Future<void> _openSearch() async {
