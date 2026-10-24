@@ -8,6 +8,30 @@ A tiny dsh plugin that adds **Settings → 扫码配对 (Pair)** showing the liv
 
 ---
 
+## Quick start · 快速开始
+
+Two ways to get a scannable code. 两种拿到二维码的方式：
+
+**A. Easiest — use the bundled PC companion (no plugin install needed) · 最省事：用本仓库自带的陪伴进程（不用装插件）**
+
+```powershell
+cd companion
+npm install
+npm start        # prints the QR in the terminal, writes pair-qr.png / pair-url.txt
+```
+
+Scan the QR with the Android app. The companion starts `dsh web --host <LAN-IP> --port 3080` for you.
+
+用 Android App 扫终端里的二维码即可；它会以局域网地址启动 dsh。
+
+**B. Show the QR inside dsh settings (this plugin) · 在 dsh 设置里显示二维码（本插件）**
+
+1. Install this plugin into your dsh profile (below) and restart dsh · 安装插件并重启 dsh；
+2. Start dsh **on the LAN**: `dsh web --host <PC-IP> --port 3080` · 以局域网地址启动；
+3. Open **Settings → 扫码配对** and scan · 打开设置 →「扫码配对」扫码。
+
+> The plugin only renders the QR. dsh must still be reachable from the phone — a loopback-only instance (the desktop app) cannot be paired. · 插件只负责显示二维码；dsh 必须绑定局域网地址，桌面应用（只监听回环）无法配对。
+
 ## What it does · 它做什么
 
 - `GET /lanbuddy/pair` — a standalone page with the QR (open it in any browser) · 独立配对页；
