@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'pairing/scan_page.dart';
 import 'pairing/pair_client.dart';
@@ -94,8 +95,8 @@ class _PairGateState extends State<PairGate> with WidgetsBindingObserver {
   /// One approval dialog at a time; the queue drains as each is answered.
   bool _approvalDialogOpen = false;
 
-  /// Whether the OS already exempts this app from battery optimization.
-  bool? _powerExempt;
+  /// One-time background-notification hint (shown after the first pairing).
+  static const String _hintKey = 'lanbuddy.notificationHintShown';
 
   /// A notification tap that arrived before the pairing was restored.
   String? _pendingOpen;
@@ -192,15 +193,57 @@ class _PairGateState extends State<PairGate> with WidgetsBindingObserver {
     _openSession(id);
   }
 
-  Future<void> _loadPowerState() async {
-    final exempt = await PowerSettings.isExempt();
-    if (mounted) setState(() => _powerExempt = exempt);
-  }
-
-  Future<void> _openPowerSettings() async {
-    await PowerSettings.requestExempt();
-    await Future<void>.delayed(const Duration(seconds: 1));
-    await _loadPowerState();
+  /// Nudge once, right after the first successful pairing. Every later launch
+  /// stays clean: the pairing page never carries a permanent settings row.
+  Future<void> _maybeShowNotificationHint() async {
+    if (!mounted) return;
+    // A notification tap may be about to open a conversation; do not stack a
+    // dialog on top of it.
+    if (_pendingOpen != null) return;
+    final preferences = await SharedPreferences.getInstance();
+    if (preferences.getBool(_hintKey) == true) return;
+    if (!mounted) return;
+    await preferences.setBool(_hintKey, true);
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: Colors.white,
+        surfaceTintColor: Colors.transparent,
+        title: const Text(
+          '后台通知',
+          style: TextStyle(fontSize: 17, fontWeight: FontWeight.w600),
+        ),
+        content: const Text(
+          '退到后台或锁屏后，任务完成会提醒你，点通知直达对应会话。\n\n'
+          'Android 会冻结普通后台应用：把本应用的省电策略设为「无限制」，通知才不会被系统掐断。',
+          style: TextStyle(fontSize: 14, height: 1.45, color: Color(0xFF3A3A3C)),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text(
+              '暂不',
+              style: TextStyle(fontSize: 15, color: Color(0xFF8E8E93)),
+            ),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(ctx);
+              PowerSettings.requestExempt();
+            },
+            child: const Text(
+              '去设置',
+              style: TextStyle(
+                fontSize: 15,
+                fontWeight: FontWeight.w600,
+                color: Color(0xFF007AFF),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   /// iOS-style prompt for the oldest pending approval.
@@ -310,11 +353,12 @@ class _PairGateState extends State<PairGate> with WidgetsBindingObserver {
       _activeOrigin = saved.pcOrigin;
     });
     _watchApprovals(_result!);
-    _loadPowerState();
     final pending = _pendingOpen;
     if (pending != null) {
       _pendingOpen = null;
       WidgetsBinding.instance.addPostFrameCallback((_) => _openSession(pending));
+    } else {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _maybeShowNotificationHint());
     }
   }
 
@@ -345,7 +389,10 @@ class _PairGateState extends State<PairGate> with WidgetsBindingObserver {
       _result = result;
       _phase = result.ok ? LinkPhase.paired : LinkPhase.failed;
     });
-    if (result.ok) _watchApprovals(result);
+    if (result.ok) {
+      _watchApprovals(result);
+      WidgetsBinding.instance.addPostFrameCallback((_) => _maybeShowNotificationHint());
+    }
   }
 
   /// Forget the current PC; switch to another saved one when present.
@@ -562,64 +609,6 @@ class _PairGateState extends State<PairGate> with WidgetsBindingObserver {
                       ),
                     ),
                     child: const Text('进入会话', style: TextStyle(fontSize: 16)),
-                  ),
-                ),
-              ],
-              if (_phase == LinkPhase.paired) ...[
-                const SizedBox(height: 16),
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.fromLTRB(14, 11, 6, 11),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Row(
-                    children: [
-                      Icon(
-                        _powerExempt == true
-                            ? Icons.notifications_active_outlined
-                            : Icons.notifications_off_outlined,
-                        size: 18,
-                        color: _powerExempt == true
-                            ? const Color(0xFF30D158)
-                            : const Color(0xFF8E8E93),
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Text(
-                              '后台通知',
-                              style: TextStyle(
-                                fontSize: 14,
-                                fontWeight: FontWeight.w500,
-                                color: Color(0xFF1C1C1E),
-                              ),
-                            ),
-                            const SizedBox(height: 2),
-                            Text(
-                              _powerExempt == true
-                                  ? '任务完成会在后台提醒你'
-                                  : '把省电设为「无限制」，退到后台才收得到完成通知',
-                              style: const TextStyle(
-                                fontSize: 12,
-                                height: 1.3,
-                                color: Color(0xFF8E8E93),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      TextButton(
-                        onPressed: _openPowerSettings,
-                        child: const Text(
-                          '设置',
-                          style: TextStyle(fontSize: 14),
-                        ),
-                      ),
-                    ],
                   ),
                 ),
               ],

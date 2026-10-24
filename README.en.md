@@ -49,7 +49,7 @@ Leave the app (or lock the phone) and let a **main session** finish on the PC �
 - Never while you are looking at that conversation, or while the app is in the foreground.
 - Tapping the notification opens that conversation.
 
-**The OS must be told not to freeze the app**: pairing page → "后台通知 → 设置" → **No restrictions**; HyperOS also needs autostart allowed. That exemption is what keeps the LAN socket alive without a permanent notification.
+**The OS must be told not to freeze the app**: the first successful pairing shows a one-time prompt — tap "去设置" to open the battery policy and pick **No restrictions**; on HyperOS also allow autostart. Nothing stays on the pairing page afterwards. To change it later: system settings → Apps → DeepSeek Harness → battery → No restrictions. No foreground service, no persistent notification.
 
 Known limit (Android, not a missing feature): swiping the app away from recents, or an aggressive kill after long idle, drops the socket — notifications during that window are lost, and the app catches up when you reopen it.
 
