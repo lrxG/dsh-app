@@ -1,6 +1,6 @@
 # DSH Companion — Android client
 
-**English** | [中文](#中文)
+**English** · 中文（同一页面双语）
 
 Flutter source of the **DSH Companion** Android app: pair with a local DeepSeek Harness (dsh) instance by scanning a QR code, then read and continue your sessions from the phone over the LAN.
 
