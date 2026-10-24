@@ -38,6 +38,9 @@ class _SessionsPageState extends State<SessionsPage> {
   /// Pinned session ids (registry-global), rendered ahead of unpinned rows.
   Set<String> _pinned = const {};
 
+  /// PC model catalog, used to show each row's model name.
+  ModelCatalogData? _catalog;
+
   /// PC Workspace registry (titles, membership, archived set). Null when the
   /// snapshot failed — grouping then falls back to cwd tails.
   WorkspaceSnapshot? _workspaces;
@@ -56,10 +59,13 @@ class _SessionsPageState extends State<SessionsPage> {
     setState(() => _loading = true);
     try {
       final snapshotFuture = _loadWorkspaces();
+      final catalogFuture = _rpc.modelCatalog().catchError((Object _) => null);
       final items = await _rpc.listSessions();
       final snapshot = await snapshotFuture;
+      final catalog = await catalogFuture;
       if (!mounted) return;
       setState(() {
+        _catalog = catalog;
         _workspaces = snapshot;
         _pinned = (snapshot?.pinnedSessionIds ?? const <String>[]).toSet();
         // PC sidebar rule: subagent durable summaries and archived sessions
@@ -355,6 +361,7 @@ class _SessionsPageState extends State<SessionsPage> {
         return _SessionRow(
           summary: row,
           timeText: _timeOf(row.updatedAt),
+          modelText: _modelText(row),
           showDivider: i != rows.length,
           pinned: _pinned.contains(row.sessionId),
           onTap: () => _open(row),
@@ -524,6 +531,15 @@ class _SessionsPageState extends State<SessionsPage> {
     }
   }
 
+  /// Model caption for one row: the session's own pick, else the deployment
+  /// default (marked as such), resolved through the catalog display names.
+  String _modelText(SessionSummary s) {
+    final selection = s.model ?? _catalog?.default_;
+    if (selection == null) return '模型未配置';
+    final label = _catalog?.displayName(selection) ?? selection.model;
+    return s.model == null ? '$label · 默认' : label;
+  }
+
   Future<void> _openSearch() async {
     await Navigator.push(
       context,
@@ -655,6 +671,7 @@ class _SessionRow extends StatelessWidget {
   const _SessionRow({
     required this.summary,
     required this.timeText,
+    required this.modelText,
     required this.showDivider,
     required this.pinned,
     required this.onTap,
@@ -663,6 +680,7 @@ class _SessionRow extends StatelessWidget {
 
   final SessionSummary summary;
   final String timeText;
+  final String modelText;
   final bool showDivider;
   final bool pinned;
   final VoidCallback onTap;
@@ -722,7 +740,7 @@ class _SessionRow extends StatelessWidget {
               ),
               const SizedBox(height: 3),
               Text(
-                summary.cwd ?? '未指定目录',
+                modelText,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: const TextStyle(fontSize: 12.5, color: Color(0xFF8A8A8E)),

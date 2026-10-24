@@ -228,6 +228,7 @@ class SessionSummary {
         origin = e['origin'] is String ? e['origin'] as String : null,
         parentSessionId =
             e['parentSessionId'] is String ? e['parentSessionId'] as String : null,
+        model = _projectedModel(e['projections']),
         title = _projectedTitle(e['projections']);
 
   final String sessionId;
@@ -240,9 +241,25 @@ class SessionSummary {
   /// `origin:'subagent'` rows are hidden by the PC sidebar too (ui-workspace).
   final String? origin;
   final String? parentSessionId;
+  /// The session's own model pick (`modelSelection.next|lastUsed`), null when
+  /// it still runs on the deployment default.
+  final ModelSelection? model;
 
   /// True for subagent/child sessions the PC doesn't show in its sidebar.
   bool get hiddenOnPc => origin == 'subagent' || parentSessionId != null;
+
+  static ModelSelection? _projectedModel(Object? projections) {
+    if (projections is! Map) return null;
+    final values = projections['values'];
+    if (values is! Map) return null;
+    final selection = values['modelSelection'];
+    if (selection is! Map) return null;
+    final next = selection['next'];
+    final lastUsed = selection['lastUsed'];
+    return ModelSelection.fromWire(
+      next is Map ? next : (lastUsed is Map ? lastUsed : null),
+    );
+  }
 
   static String? _projectedTitle(Object? projections) {
     if (projections is! Map) return null;
