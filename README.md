@@ -6,6 +6,8 @@ An Android client for **DeepSeek Harness (dsh)** plus a **dsh plugin that shows 
 
 一个 **DeepSeek Harness (dsh)** 的 Android 客户端，附带一个**在 dsh 设置里直接显示配对二维码的插件**。局域网扫码即连，不走云端、不需要账号，数据只在你自己的电脑和手机之间流动。
 
+<p align="center"><img src="docs/images/paired.jpg" alt="DSH Companion — paired with the PC" width="320"></p>
+
 > **This branch (`main`) is the Android app source.** · 本分支是 **安卓客户端源码**。
 > The dsh QR plugin lives on the **`plugin` branch** · dsh 二维码插件在 **`plugin` 分支**。
 > Ready-to-install APK is in **Releases** · 安装包在 **Releases**。
