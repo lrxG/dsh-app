@@ -6,6 +6,7 @@ import 'dsh_client.dart';
 import 'chat_page.dart';
 import 'mux_client.dart';
 import 'session_activity.dart';
+import '../version.dart';
 
 /// Session list mirroring the PC sidebar: subagent/child durable summaries
 /// hidden (`origin:'subagent'`, same rule as dsh ui-workspace), archived
@@ -45,7 +46,7 @@ class _SessionsPageState extends State<SessionsPage> {
   /// PC Workspace registry (titles, membership, archived set). Null when the
   /// snapshot failed — grouping then falls back to cwd tails.
   WorkspaceSnapshot? _workspaces;
-  String? _error;
+  RpcFailure? _error;
   bool _loading = false;
   bool _creating = false;
 
@@ -100,16 +101,10 @@ class _SessionsPageState extends State<SessionsPage> {
         _error = null;
         _loading = false;
       });
-    } on RpcError catch (e) {
+    } catch (error) {
       if (!mounted) return;
       setState(() {
-        _error = '${e.code}: ${e.message}';
-        _loading = false;
-      });
-    } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _error = '$e';
+        _error = describeFailure(error);
         _loading = false;
       });
     }
@@ -281,12 +276,39 @@ class _SessionsPageState extends State<SessionsPage> {
           ),
         ],
       ),
-      body: switch ((_items, _error)) {
-        (_, final String e) => _ErrorView(e, onRetry: _refresh),
-        (final List<SessionSummary> list, null) when list.isEmpty => const _EmptyView(),
-        (final List<SessionSummary> list, null) => _buildList(list),
-        _ => const Center(child: CircularProgressIndicator(color: Color(0xFF007AFF))),
-      },
+      body: Column(
+        children: [
+          Expanded(
+            child: switch ((_items, _error)) {
+              (_, final RpcFailure e) => _ErrorView(
+                  e,
+                  onRetry: _refresh,
+                  onRepair: () => Navigator.of(context).popUntil((r) => r.isFirst),
+                ),
+              (final List<SessionSummary> list, null) when list.isEmpty =>
+                const _EmptyView(),
+              (final List<SessionSummary> list, null) => _buildList(list),
+              _ => const Center(
+                  child: CircularProgressIndicator(color: Color(0xFF007AFF)),
+                ),
+            },
+          ),
+          SafeArea(
+            top: false,
+            child: Padding(
+              padding: const EdgeInsets.only(top: 4, bottom: 10),
+              child: Text(
+                'DeepSeek Harness $appVersion',
+                style: const TextStyle(
+                  fontSize: 11,
+                  letterSpacing: 0.3,
+                  color: Color(0xFFC7C7CC),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -932,7 +954,6 @@ class _SessionSearchPageState extends State<SessionSearchPage> {
   List<_SearchRow> _rows = const [];
   Map<String, SessionSummary> _summaries = const {};
   bool _loading = false;
-  String? _error;
   String _query = '';
 
   @override
@@ -971,7 +992,6 @@ class _SessionSearchPageState extends State<SessionSearchPage> {
     if (_query.isEmpty) {
       setState(() {
         _rows = const [];
-        _error = null;
         _loading = false;
       });
       return;
@@ -1002,10 +1022,11 @@ class _SessionSearchPageState extends State<SessionSearchPage> {
 
     setState(() {
       _loading = true;
-      _error = null;
     });
 
-    // 2) Content matches from the Host's FTS index.
+    // 2) Content matches from the Host's FTS index. A query that hits nothing
+    // (or a Host whose index is unavailable) simply leaves the name matches
+    // standing: an empty result is an empty result, not an error to explain.
     try {
       final result = await _rpc.searchSessions(query);
       if (!mounted) return;
@@ -1028,18 +1049,10 @@ class _SessionSearchPageState extends State<SessionSearchPage> {
         _rows = rows;
         _loading = false;
       });
-    } on RpcError catch (e) {
+    } catch (_) {
       if (!mounted) return;
       setState(() {
         _rows = rows;
-        _error = e.message;
-        _loading = false;
-      });
-    } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _rows = rows;
-        _error = '$e';
         _loading = false;
       });
     }
@@ -1064,7 +1077,6 @@ class _SessionSearchPageState extends State<SessionSearchPage> {
 
   @override
   Widget build(BuildContext context) {
-    final cjk = RegExp(r'[\u4e00-\u9fff]').hasMatch(_query);
     return Scaffold(
       backgroundColor: const Color(0xFFF2F2F7),
       appBar: AppBar(
@@ -1108,36 +1120,10 @@ class _SessionSearchPageState extends State<SessionSearchPage> {
             )
           : _rows.isEmpty
               ? Center(
-                  child: Padding(
-                    padding: const EdgeInsets.all(28),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(
-                          _loading ? '搜索中…' : '没有匹配的会话',
-                          style: const TextStyle(
-                              fontSize: 14, color: Color(0xFF8E8E93)),
-                        ),
-                        if (!_loading && cjk) ...[
-                          const SizedBox(height: 10),
-                          const Text(
-                            'PC 端内容检索按词匹配，中文可尝试更短的词，或改用会话名搜索',
-                            textAlign: TextAlign.center,
-                            style: TextStyle(
-                                fontSize: 12, color: Color(0xFFAEAEB2)),
-                          ),
-                        ],
-                        if (!_loading && _error != null) ...[
-                          const SizedBox(height: 10),
-                          Text(
-                            '内容检索不可用：$_error',
-                            textAlign: TextAlign.center,
-                            style: const TextStyle(
-                                fontSize: 12, color: Color(0xFFAEAEB2)),
-                          ),
-                        ],
-                      ],
-                    ),
+                  child: Text(
+                    _loading ? '搜索中…' : '没有匹配的会话',
+                    style: const TextStyle(
+                        fontSize: 14, color: Color(0xFF8E8E93)),
                   ),
                 )
               : ListView.separated(
@@ -1256,10 +1242,13 @@ class _EmptyView extends StatelessWidget {
 }
 
 class _ErrorView extends StatelessWidget {
-  const _ErrorView(this.error, {required this.onRetry});
+  const _ErrorView(this.failure, {required this.onRetry, required this.onRepair});
 
-  final String error;
+  final RpcFailure failure;
   final VoidCallback onRetry;
+
+  /// Back to the pairing page: the stored cookie is dead, only a scan helps.
+  final VoidCallback onRepair;
 
   @override
   Widget build(BuildContext context) {
@@ -1269,30 +1258,56 @@ class _ErrorView extends StatelessWidget {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(Icons.wifi_off_rounded, size: 52, color: Colors.grey.shade400),
+            Icon(
+              failure.unreachable ? Icons.wifi_off_rounded : Icons.link_off_rounded,
+              size: 52,
+              color: Colors.grey.shade400,
+            ),
             const SizedBox(height: 14),
             Text(
-              '同步失败',
-              style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w600, color: Color(0xFF1C1C1E)),
+              failure.title,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                fontSize: 17,
+                fontWeight: FontWeight.w600,
+                color: Color(0xFF1C1C1E),
+              ),
             ),
             const SizedBox(height: 8),
             Text(
-              error,
+              failure.detail,
               textAlign: TextAlign.center,
-              maxLines: 4,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(fontSize: 13, color: Colors.grey.shade600, height: 1.4),
+              style: TextStyle(fontSize: 13, color: Colors.grey.shade600, height: 1.45),
             ),
             const SizedBox(height: 20),
-            FilledButton(
-              onPressed: onRetry,
-              style: FilledButton.styleFrom(
-                backgroundColor: const Color(0xFF007AFF),
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 12),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-              ),
-              child: const Text('重试', style: TextStyle(fontSize: 15)),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                FilledButton(
+                  onPressed: onRetry,
+                  style: FilledButton.styleFrom(
+                    backgroundColor: const Color(0xFF007AFF),
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
+                  child: const Text('重试', style: TextStyle(fontSize: 15)),
+                ),
+                if (failure.stalePairing) ...[
+                  const SizedBox(width: 12),
+                  TextButton(
+                    onPressed: onRepair,
+                    child: const Text(
+                      '重新配对',
+                      style: TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w500,
+                        color: Color(0xFF007AFF),
+                      ),
+                    ),
+                  ),
+                ],
+              ],
             ),
           ],
         ),

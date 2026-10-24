@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
 
@@ -214,6 +215,84 @@ class RpcError implements Exception {
 
   @override
   String toString() => '$code: $message';
+}
+
+/// A failed request, said in words the phone UI can show.
+///
+/// Three cases matter to the user and used to look identical (a raw
+/// `DioException [...]` dump in the list): the PC moved/closed its port, the
+/// stored pairing is no longer accepted, or the Host itself refused the call.
+class RpcFailure {
+  const RpcFailure({
+    required this.title,
+    required this.detail,
+    this.unreachable = false,
+    this.stalePairing = false,
+  });
+
+  final String title;
+  final String detail;
+
+  /// Nothing answered: wrong address, dsh closed, or not on the same WiFi.
+  final bool unreachable;
+
+  /// The PC answered 401/403: this phone's cookie is no longer accepted, so
+  /// only a fresh scan can help.
+  final bool stalePairing;
+
+  @override
+  String toString() => '$title · $detail';
+}
+
+/// Classify anything [DshRpc] (or a mux socket) can throw.
+RpcFailure describeFailure(Object error) {
+  if (error is RpcError) {
+    final stale = error.code.contains('auth') ||
+        error.code.contains('unauthor') ||
+        error.code.contains('forbidden');
+    return RpcFailure(
+      title: stale ? '配对已失效' : 'PC 返回错误',
+      detail: '${error.code}：${error.message}',
+      stalePairing: stale,
+    );
+  }
+  if (error is DioException) {
+    final status = error.response?.statusCode;
+    if (status == 401 || status == 403) {
+      return const RpcFailure(
+        title: '配对已失效',
+        detail: 'PC 不认这台手机了（PC 重启轮换过密钥，或设备已被移除）。重新扫码配对即可。',
+        stalePairing: true,
+      );
+    }
+    switch (error.type) {
+      case DioExceptionType.connectionError:
+      case DioExceptionType.connectionTimeout:
+      case DioExceptionType.sendTimeout:
+      case DioExceptionType.receiveTimeout:
+        return const RpcFailure(
+          title: '连不上 PC',
+          detail: '检查 dsh 是否还在运行、手机和 PC 是否在同一个 WiFi；'
+              'PC 换了地址时要重新扫一次码。',
+          unreachable: true,
+        );
+      default:
+        return RpcFailure(
+          title: '连接出错',
+          detail: status != null
+              ? 'PC 返回 HTTP $status'
+              : '${error.type.name}${error.message == null ? '' : '：${error.message}'}',
+        );
+    }
+  }
+  if (error is SocketException) {
+    return const RpcFailure(
+      title: '连不上 PC',
+      detail: '手机和 PC 之间的网络断了（换个 WiFi、关掉 VPN 再试）。',
+      unreachable: true,
+    );
+  }
+  return RpcFailure(title: '请求失败', detail: '$error');
 }
 
 /// One `session/list` entry (projection hints trimmed to what the UI uses).

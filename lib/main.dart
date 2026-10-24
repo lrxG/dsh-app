@@ -14,6 +14,7 @@ import 'session/notify.dart';
 import 'session/power.dart';
 import 'session/session_activity.dart';
 import 'session/sessions_page.dart';
+import 'version.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -102,6 +103,14 @@ class _PairGateState extends State<PairGate> with WidgetsBindingObserver {
   String? _pendingOpen;
   StreamSubscription<String>? _openSub;
 
+  /// Whether the bound PC answers right now. A stored pairing survives dsh
+  /// restarts, so "已与 PC 绑定" used to stay on screen even after the PC had
+  /// moved to another port or plugged in a different network. `null` means
+  /// "checking", which keeps the calm copy until the probe lands.
+  bool? _reachable;
+  bool _probing = false;
+  RpcFailure? _probeFailure;
+
   @override
   void initState() {
     super.initState();
@@ -126,7 +135,39 @@ class _PairGateState extends State<PairGate> with WidgetsBindingObserver {
     SessionActivity.instance.setForeground(state == AppLifecycleState.resumed);
     // A tap that resumed the app carries no extras after a task restore; the
     // native side stores the id, and this is where we claim it.
-    if (state == AppLifecycleState.resumed) _claimPendingNotification();
+    if (state == AppLifecycleState.resumed) {
+      _claimPendingNotification();
+      // The PC may have been restarted or moved while the app was away; the
+      // bound-state copy should not keep claiming a link that is gone.
+      unawaited(_probe());
+    }
+  }
+
+  /// Ask the bound PC for the session list, purely to know whether the saved
+  /// pairing still works. Failures are classified so the page can say which
+  /// one it is: unreachable PC vs. a pairing the Host no longer accepts.
+  Future<void> _probe() async {
+    final result = _result;
+    if (result == null || (result.cookieHeader ?? '').isEmpty) return;
+    if (_probing) return;
+    setState(() => _probing = true);
+    try {
+      await DshRpc(pcOrigin: result.pcOrigin, cookieHeader: result.cookieHeader!)
+          .listSessions();
+      if (!mounted) return;
+      setState(() {
+        _reachable = true;
+        _probeFailure = null;
+        _probing = false;
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _reachable = false;
+        _probeFailure = describeFailure(error);
+        _probing = false;
+      });
+    }
   }
 
   /// Watch the PC's approval waterfall once a pairing exists.
@@ -351,8 +392,11 @@ class _PairGateState extends State<PairGate> with WidgetsBindingObserver {
       );
       _phase = LinkPhase.paired;
       _activeOrigin = saved.pcOrigin;
+      _reachable = null;
+      _probeFailure = null;
     });
     _watchApprovals(_result!);
+    unawaited(_probe());
     final pending = _pendingOpen;
     if (pending != null) {
       _pendingOpen = null;
@@ -431,212 +475,260 @@ class _PairGateState extends State<PairGate> with WidgetsBindingObserver {
       LinkPhase.unpaired =>
         '在 PC 上打开 dsh → 设置 →「扫码配对」，\n或手动粘贴配对链接。',
       LinkPhase.failed => _result?.error ?? '未知错误',
-      LinkPhase.paired => '会话和模型与 PC 实时同步',
+      LinkPhase.paired => _pairedDetail,
       LinkPhase.pairing => '',
     };
+    final detailColor = _reachable == false
+        ? const Color(0xFFE5453C)
+        : const Color(0xFF8E8E93);
     return Scaffold(
       backgroundColor: const Color(0xFFF2F2F7),
       appBar: AppBar(title: const Text('DeepSeek Harness')),
-      body: Center(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 32),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              // Hero badge: soft blue disc replaces the raw icon.
-              Container(
-                width: 96,
-                height: 96,
-                decoration: BoxDecoration(
-                  color: const Color(0xFF007AFF).withValues(alpha: 0.12),
-                  shape: BoxShape.circle,
-                ),
-                child: Center(
-                  child: AnimatedSwitcher(
-                    duration: const Duration(milliseconds: 350),
-                    child: _phase == LinkPhase.pairing
-                        ? const SizedBox(
-                            width: 34,
-                            height: 34,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 3,
-                              color: Color(0xFF007AFF),
-                            ),
-                          )
-                        : Icon(
-                            switch (_phase) {
-                              LinkPhase.paired => Icons.check_rounded,
-                              LinkPhase.failed => Icons.link_off,
-                              _ => Icons.qr_code_scanner,
-                            },
-                            size: 44,
-                            color: const Color(0xFF007AFF),
-                          ),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 24),
-              Text(
-                status,
-                style: const TextStyle(
-                  fontSize: 22,
-                  fontWeight: FontWeight.w700,
-                  color: Color(0xFF1C1C1E),
-                ),
-              ),
-              if (detail.isNotEmpty) ...[
-                const SizedBox(height: 8),
-                Text(
-                  detail,
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(
-                    fontSize: 14,
-                    height: 1.4,
-                    color: Color(0xFF8E8E93),
-                  ),
-                ),
-              ],
-              if (_phase == LinkPhase.failed && _lastPair != null) ...[
-                const SizedBox(height: 22),
-                SizedBox(
-                  width: double.infinity,
-                  height: 48,
-                  child: FilledButton(
-                    onPressed: () => _pair(_lastPair!),
-                    style: FilledButton.styleFrom(
-                      backgroundColor: const Color(0xFF007AFF),
-                      foregroundColor: Colors.white,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(14),
-                      ),
-                    ),
-                    child: const Text('重试配对', style: TextStyle(fontSize: 16)),
-                  ),
-                ),
-              ],
-              if (_phase == LinkPhase.paired && _saved.length > 1) ...[
-                const SizedBox(height: 14),
-                Container(
-                  width: double.infinity,
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(12),
-                  ),
+      body: SafeArea(
+        top: false,
+        child: Column(
+          children: [
+            Expanded(
+              child: Center(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 32),
                   child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      for (final device in _saved)
-                        InkWell(
-                          onTap: device.pcOrigin == _activeOrigin
-                              ? null
-                              : () => _activate(device),
-                          child: Padding(
-                            padding: const EdgeInsets.fromLTRB(14, 11, 8, 11),
-                            child: Row(
-                              children: [
-                                Icon(
-                                  device.pcOrigin == _activeOrigin
-                                      ? Icons.check_circle
-                                      : Icons.circle_outlined,
-                                  size: 17,
-                                  color: device.pcOrigin == _activeOrigin
-                                      ? const Color(0xFF30D158)
-                                      : const Color(0xFFC7C7CC),
-                                ),
-                                const SizedBox(width: 8),
-                                Expanded(
-                                  child: Text(
-                                    device.label,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: TextStyle(
-                                      fontSize: 14,
-                                      color: device.pcOrigin == _activeOrigin
-                                          ? const Color(0xFF1C1C1E)
-                                          : const Color(0xFF3A3A3C),
+                      // Hero badge: soft blue disc replaces the raw icon.
+                      Container(
+                        width: 96,
+                        height: 96,
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF007AFF).withValues(alpha: 0.12),
+                          shape: BoxShape.circle,
+                        ),
+                        child: Center(
+                          child: AnimatedSwitcher(
+                            duration: const Duration(milliseconds: 350),
+                            child: _phase == LinkPhase.pairing
+                                ? const SizedBox(
+                                    width: 34,
+                                    height: 34,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 3,
+                                      color: Color(0xFF007AFF),
+                                    ),
+                                  )
+                                : Icon(
+                                    switch (_phase) {
+                                      LinkPhase.paired => Icons.check_rounded,
+                                      LinkPhase.failed => Icons.link_off,
+                                      _ => Icons.qr_code_scanner,
+                                    },
+                                    size: 44,
+                                    color: const Color(0xFF007AFF),
+                                  ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 24),
+                      Text(
+                        status,
+                        style: const TextStyle(
+                          fontSize: 22,
+                          fontWeight: FontWeight.w700,
+                          color: Color(0xFF1C1C1E),
+                        ),
+                      ),
+                      if (detail.isNotEmpty) ...[
+                        const SizedBox(height: 8),
+                        Text(
+                          detail,
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            fontSize: 14,
+                            height: 1.4,
+                            color: detailColor,
+                          ),
+                        ),
+                      ],
+                      if (_phase == LinkPhase.failed && _lastPair != null) ...[
+                        const SizedBox(height: 22),
+                        SizedBox(
+                          width: double.infinity,
+                          height: 48,
+                          child: FilledButton(
+                            onPressed: () => _pair(_lastPair!),
+                            style: FilledButton.styleFrom(
+                              backgroundColor: const Color(0xFF007AFF),
+                              foregroundColor: Colors.white,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(14),
+                              ),
+                            ),
+                            child: const Text('重试配对', style: TextStyle(fontSize: 16)),
+                          ),
+                        ),
+                      ],
+                      if (_phase == LinkPhase.paired && _saved.length > 1) ...[
+                        const SizedBox(height: 14),
+                        Container(
+                          width: double.infinity,
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Column(
+                            children: [
+                              for (final device in _saved)
+                                InkWell(
+                                  onTap: device.pcOrigin == _activeOrigin
+                                      ? null
+                                      : () => _activate(device),
+                                  child: Padding(
+                                    padding: const EdgeInsets.fromLTRB(14, 11, 8, 11),
+                                    child: Row(
+                                      children: [
+                                        Icon(
+                                          device.pcOrigin == _activeOrigin
+                                              ? Icons.check_circle
+                                              : Icons.circle_outlined,
+                                          size: 17,
+                                          color: device.pcOrigin == _activeOrigin
+                                              ? const Color(0xFF30D158)
+                                              : const Color(0xFFC7C7CC),
+                                        ),
+                                        const SizedBox(width: 8),
+                                        Expanded(
+                                          child: Text(
+                                            device.label,
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: TextStyle(
+                                              fontSize: 14,
+                                              color: device.pcOrigin == _activeOrigin
+                                                  ? const Color(0xFF1C1C1E)
+                                                  : const Color(0xFF3A3A3C),
+                                            ),
+                                          ),
+                                        ),
+                                        IconButton(
+                                          visualDensity: VisualDensity.compact,
+                                          icon: const Icon(Icons.close,
+                                              size: 16, color: Color(0xFFAEAEB2)),
+                                          tooltip: '移除这台设备',
+                                          onPressed: () async {
+                                            await PairStore().remove(device.pcOrigin);
+                                            final remaining = await PairStore().loadAll();
+                                            if (!mounted) return;
+                                            setState(() => _saved = remaining);
+                                            if (device.pcOrigin == _activeOrigin) {
+                                              if (remaining.isNotEmpty) {
+                                                _activate(remaining.first);
+                                              } else {
+                                                setState(() {
+                                                  _result = null;
+                                                  _phase = LinkPhase.unpaired;
+                                                });
+                                              }
+                                            }
+                                          },
+                                        ),
+                                      ],
                                     ),
                                   ),
                                 ),
-                                IconButton(
-                                  visualDensity: VisualDensity.compact,
-                                  icon: const Icon(Icons.close,
-                                      size: 16, color: Color(0xFFAEAEB2)),
-                                  tooltip: '移除这台设备',
-                                  onPressed: () async {
-                                    await PairStore().remove(device.pcOrigin);
-                                    final remaining = await PairStore().loadAll();
-                                    if (!mounted) return;
-                                    setState(() => _saved = remaining);
-                                    if (device.pcOrigin == _activeOrigin) {
-                                      if (remaining.isNotEmpty) {
-                                        _activate(remaining.first);
-                                      } else {
-                                        setState(() {
-                                          _result = null;
-                                          _phase = LinkPhase.unpaired;
-                                        });
-                                      }
-                                    }
-                                  },
+                            ],
+                          ),
+                        ),
+                      ],
+                      if (_phase == LinkPhase.paired && _result != null) ...[
+                        const SizedBox(height: 28),
+                        SizedBox(
+                          width: double.infinity,
+                          height: 50,
+                          child: FilledButton(
+                            onPressed: () => Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (_) => SessionsPage(
+                                  pcOrigin: _result!.pcOrigin,
+                                  cookieHeader: _result!.cookieHeader ?? '',
                                 ),
-                              ],
+                              ),
+                            ),
+                            style: FilledButton.styleFrom(
+                              backgroundColor: const Color(0xFF007AFF),
+                              foregroundColor: Colors.white,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(14),
+                              ),
+                            ),
+                            child: const Text('进入会话', style: TextStyle(fontSize: 16)),
+                          ),
+                        ),
+                      ],
+                      if (_phase == LinkPhase.paired && _reachable == false) ...[
+                        const SizedBox(height: 10),
+                        TextButton(
+                          onPressed: _probing ? null : _probe,
+                          child: Text(
+                            _probing ? '正在检查…' : '重新检查连接',
+                            style: const TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w500,
+                              color: Color(0xFF007AFF),
                             ),
                           ),
                         ),
+                      ],
+                      const SizedBox(height: 16),
+                      if (_phase == LinkPhase.paired)
+                        TextButton(
+                          onPressed: _unpair,
+                          child: const Text(
+                            '解除绑定',
+                            style: TextStyle(fontSize: 13, color: Color(0xFF8E8E93)),
+                          ),
+                        ),
+                      _PairAction(
+                        icon: Icons.qr_code_scanner_rounded,
+                        label: '扫码配对',
+                        onTap: _phase == LinkPhase.pairing ? null : _scan,
+                      ),
+                      const SizedBox(height: 10),
+                      _PairAction(
+                        icon: Icons.paste_rounded,
+                        label: '手动粘贴配对链接',
+                        onTap: _phase == LinkPhase.pairing ? null : () => _manual(context),
+                      ),
                     ],
                   ),
                 ),
-              ],
-              if (_phase == LinkPhase.paired && _result != null) ...[
-                const SizedBox(height: 28),
-                SizedBox(
-                  width: double.infinity,
-                  height: 50,
-                  child: FilledButton(
-                    onPressed: () => Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) => SessionsPage(
-                          pcOrigin: _result!.pcOrigin,
-                          cookieHeader: _result!.cookieHeader ?? '',
-                        ),
-                      ),
-                    ),
-                    style: FilledButton.styleFrom(
-                      backgroundColor: const Color(0xFF007AFF),
-                      foregroundColor: Colors.white,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(14),
-                      ),
-                    ),
-                    child: const Text('进入会话', style: TextStyle(fontSize: 16)),
-                  ),
-                ),
-              ],
-              const SizedBox(height: 16),
-              if (_phase == LinkPhase.paired)
-                TextButton(
-                  onPressed: _unpair,
-                  child: const Text(
-                    '解除绑定',
-                    style: TextStyle(fontSize: 13, color: Color(0xFF8E8E93)),
-                  ),
-                ),
-              _PairAction(
-                icon: Icons.qr_code_scanner_rounded,
-                label: '扫码配对',
-                onTap: _phase == LinkPhase.pairing ? null : _scan,
               ),
-              const SizedBox(height: 10),
-              _PairAction(
-                icon: Icons.paste_rounded,
-                label: '手动粘贴配对链接',
-                onTap: _phase == LinkPhase.pairing ? null : () => _manual(context),
+            ),
+            Padding(
+              padding: const EdgeInsets.only(bottom: 14),
+              child: Text(
+                'DeepSeek Harness $appVersion',
+                style: const TextStyle(
+                  fontSize: 11,
+                  letterSpacing: 0.3,
+                  color: Color(0xFFC7C7CC),
+                ),
               ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );
+  }
+
+  /// The line under "已与 PC 绑定": calm copy only while the PC answers.
+  String get _pairedDetail {
+    if (_reachable != false) {
+      return _probing && _reachable == null ? '正在检查连接…' : '会话和模型与 PC 实时同步';
+    }
+    if (_probeFailure?.stalePairing == true) {
+      return '配对已失效：在 PC 上重新扫码配对一次';
+    }
+    return '连不上这台 PC · 检查 dsh 是否在运行、手机是否还在同一 WiFi';
   }
 
   Future<void> _manual(BuildContext context) async {
