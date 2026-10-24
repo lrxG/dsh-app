@@ -10,27 +10,36 @@ A tiny dsh plugin that adds **Settings → 扫码配对 (Pair)** showing the liv
 
 ## Quick start · 快速开始
 
-Two ways to get a scannable code. 两种拿到二维码的方式：
+**Install the plugin, open Settings → 扫码配对, scan.** That is all — no companion, no `--host` flag.
 
-**A. Easiest — use the bundled PC companion (no plugin install needed) · 最省事：用本仓库自带的陪伴进程（不用装插件）**
+**装好插件 → 设置 →「扫码配对」→ 扫码即可**，不需要陪伴进程，也不需要手动加 `--host`。
 
 ```powershell
-cd companion
-npm install
-npm start        # prints the QR in the terminal, writes pair-qr.png / pair-url.txt
+# 1) install (dsh plugin manager: Plugins → Add plugin → absolute path; or see below)
+# 2) restart dsh if prompted
+# 3) Settings → 扫码配对 → scan with the Android app
 ```
 
-Scan the QR with the Android app. The companion starts `dsh web --host <LAN-IP> --port 3080` for you.
+How it works on a loopback-only instance (the Desktop app): the plugin starts a **LAN gateway** that listens on `<LAN-IP>:3080` and proxies HTTP + WebSocket to the local dsh, rewriting Host/Origin so dsh's trust fence still applies. The QR therefore points at the LAN address and the phone can connect — same process, same sessions.
 
-用 Android App 扫终端里的二维码即可；它会以局域网地址启动 dsh。
+回环实例（桌面应用）也能直接扫：插件会自动在 `<局域网IP>:3080` 开一个 **局域网网关**，把 HTTP/WebSocket 转发给本机 dsh（重写 Host/Origin 以通过信任围栏），二维码指向局域网地址，手机连的就是同一个进程。
 
-**B. Show the QR inside dsh settings (this plugin) · 在 dsh 设置里显示二维码（本插件）**
+> Security: the gateway exposes the whole dsh surface on the LAN, exactly like `--host` does — cookie/token gated. Disable with `lanGateway: false` in the plugin config, or change `lanPort`.
+> 安全：网关等同于 `--host`，会把完整 dsh 暴露到局域网（同样要 cookie/token）。可在插件配置里 `lanGateway: false` 关闭，或改 `lanPort`。
 
-1. Install this plugin into your dsh profile (below) and restart dsh · 安装插件并重启 dsh；
-2. Start dsh **on the LAN**: `dsh web --host <PC-IP> --port 3080` · 以局域网地址启动；
-3. Open **Settings → 扫码配对** and scan · 打开设置 →「扫码配对」扫码。
+**Without the plugin** you can still start dsh yourself: `dsh web --host <LAN-IP> --port 3080`, then scan any QR of the printed URL.
+**不装插件**也可以：自己用 `dsh web --host <局域网IP>` 启动，再扫该 URL 的二维码。
 
-> The plugin only renders the QR. dsh must still be reachable from the phone — a loopback-only instance (the desktop app) cannot be paired. · 插件只负责显示二维码；dsh 必须绑定局域网地址，桌面应用（只监听回环）无法配对。
+The optional `companion/` folder in this branch automates that start if you prefer a terminal QR.
+本分支里的 `companion/` 是可选的自动化启动脚本（终端出码）。
+
+## LAN gateway · 局域网网关
+
+- Binds `<LAN-IP>:3080` (falls back to the next free port when taken) · 绑定局域网 3080，占用则自动顺延；
+- Proxies every path, including `/api` and the `/api/remote.mux` WebSocket upgrade · 代理全部路径，含 API 与 WS；
+- Rewrites `Host`/`Origin` to `127.0.0.1:<dsh-port>` so dsh's fence accepts the request · 重写 Host/Origin 通过围栏；
+- Only starts when dsh itself is loopback-bound · 仅当 dsh 只监听回环时启动；
+- Config: `{ lanGateway: false }` to disable, `{ lanHost, lanPort }` to override · 配置项关闭/改地址端口。
 
 ## What it does · 它做什么
 

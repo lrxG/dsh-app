@@ -1,8 +1,8 @@
 {
   "name": "dsh-lanbuddy-pair",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
-  "description": "dsh 扫码配对页（局域网直连）",
+  "description": "dsh 扫码配对页 + 局域网网关（loopback 实例也能被手机访问）",
   "type": "module",
   "main": "lib/index.js",
   "exports": {
@@ -14,6 +14,7 @@
   "files": [
     "lib/index.js",
     "lib/client.js",
+    "lib/gateway.js",
     "lib/qrcode.cjs",
     "cordis.patch.yml"
   ],
