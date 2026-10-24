@@ -29,6 +29,8 @@ git clone -b plugin https://github.com/lrxG/dsh-app dsh-plugin
 
 需要 PATH 里有 `pnpm`；本包声明了 `dsh.bundle`，插件管理器才会安装。
 
+没装过 `pnpm` 的话：先装 [Node.js LTS](https://nodejs.org/)（一路 Next），然后在 **PowerShell** 里执行 `npm install -g pnpm`，重开终端后 `pnpm -v` 有版本号即可。官方说明：[pnpm.io/installation](https://pnpm.io/installation)。
+
 **2. 配对**
 
 1. 打开 **dsh → 设置 →「扫码配对」**；

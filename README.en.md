@@ -29,6 +29,8 @@ git clone -b plugin https://github.com/lrxG/dsh-app dsh-plugin
 
 Requires `pnpm` on PATH. The package declares `dsh.bundle`, so the plugin manager accepts it.
 
+No `pnpm` yet? Install [Node.js LTS](https://nodejs.org/) (keep clicking Next), then in **PowerShell** run `npm install -g pnpm`, open a fresh terminal and check `pnpm -v`. Official docs: [pnpm.io/installation](https://pnpm.io/installation).
+
 **2. Pair**
 
 1. Open **dsh → Settings → 扫码配对**
