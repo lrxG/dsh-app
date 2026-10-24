@@ -1,6 +1,6 @@
 {
   "name": "dsh-lanbuddy-pair",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "private": true,
   "description": "dsh 扫码配对页 + 局域网网关（loopback 实例也能被手机访问）",
   "type": "module",

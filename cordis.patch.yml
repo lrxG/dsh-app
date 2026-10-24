@@ -1,8 +1,9 @@
 # dsh-lanbuddy-pair bundle patch.
 #
-# A bundle contributes its own Loader rows; the profile selects this bundle via
-# package.json `dsh.profile.bundles`. The row below mounts the host plugin (QR
-# routes); its browser half is discovered from package.json `dsh.client`.
+# A bundle contributes its own Loader rows; the plugin manager selects this
+# bundle through package.json `dsh.bundle`, which points at this patch. The row
+# below mounts the host plugin (QR routes); its browser half is discovered from
+# package.json `dsh.client`.
 - insert:
     - id: lanbuddy-pair
       name: "dsh-lanbuddy-pair"
