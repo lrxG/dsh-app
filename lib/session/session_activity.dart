@@ -49,14 +49,9 @@ class SessionActivity extends ChangeNotifier {
   /// Session currently open in a chat page, for notification suppression.
   String? activeSessionId;
 
-  String? get pcOrigin => _origin;
-  String? get cookieHeader => _cookie;
+  String? titleOf(String sessionId) => _rows[sessionId]?.title;
 
-  /// True while the session itself or any of its descendants runs.
-  bool isBusy(String sessionId) {
-    if (_rows[sessionId]?.running ?? false) return true;
-    return runningDescendants(sessionId) > 0;
-  }
+  String? parentOf(String sessionId) => _rows[sessionId]?.parentId;
 
   /// Running direct or indirect children (what the PC shows as "N subagent").
   int runningDescendants(String sessionId) {
@@ -68,11 +63,10 @@ class SessionActivity extends ChangeNotifier {
     return count;
   }
 
-  String? titleOf(String sessionId) => _rows[sessionId]?.title;
-
-  String? parentOf(String sessionId) => _rows[sessionId]?.parentId;
-
-  bool isSubagent(String sessionId) => _rows[sessionId]?.subagent ?? false;
+  bool _isBusy(String sessionId) {
+    if (_rows[sessionId]?.running ?? false) return true;
+    return runningDescendants(sessionId) > 0;
+  }
 
   void setForeground(bool value) {
     if (_foreground == value) return;
@@ -140,6 +134,8 @@ class SessionActivity extends ChangeNotifier {
       onDone: _scheduleRetry,
       cancelOnError: true,
     );
+    // Titles/parent links may have changed while we were disconnected.
+    unawaited(_prime());
   }
 
   void _scheduleRetry() {
@@ -209,13 +205,16 @@ class SessionActivity extends ChangeNotifier {
     if (_stopped) return;
     final root = _rootOf(sessionId);
     if (_rows[root]?.subagent ?? false) return; // subagents serve the session
-    // Never interrupt someone who is already looking at this conversation.
-    if (activeSessionId == root) return;
+    // Never interrupt someone who is already looking at this conversation —
+    // including one of its subagent conversations.
+    final open = activeSessionId;
+    if (open != null && _rootOf(open) == root) return;
     if (_foreground) return;
-    if (isBusy(root)) return;
+    if (_isBusy(root)) return;
     final now = DateTime.now();
     final last = _notified[root];
-    if (last != null && now.difference(last).inSeconds < 10) return;
+    // Two turns can settle back-to-back; only collapse an immediate echo.
+    if (last != null && now.difference(last).inSeconds < 3) return;
     _notified[root] = now;
     Notifier.instance.show(
       title: _rows[root]?.title ?? 'DSH 会话',

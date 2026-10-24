@@ -8,7 +8,6 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
-import android.os.PowerManager
 import android.provider.OpenableColumns
 import android.provider.Settings
 import androidx.core.app.NotificationCompat
@@ -43,6 +42,9 @@ class MainActivity : FlutterActivity() {
     override fun onCreate(savedInstanceState: android.os.Bundle?) {
         super.onCreate(savedInstanceState)
         pendingSession = sessionFrom(intent)
+        // Claim the marker now: a rotation or relaunch reuses this Intent and
+        // must not replay the same tap into a second conversation.
+        clearSessionMarkers(intent)
     }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
@@ -95,36 +97,10 @@ class MainActivity : FlutterActivity() {
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "lanbuddy/power")
             .setMethodCallHandler { call, result ->
                 when (call.method) {
-                    "status" -> {
-                        val power = getSystemService(PowerManager::class.java)
-                        result.success(
-                            mapOf("ignoring" to power.isIgnoringBatteryOptimizations(packageName)),
-                        )
-                    }
                     "request" -> result.success(openIgnoreBatteryOptimizations())
-                    "appSettings" -> {
-                        try {
-                            startActivity(
-                                Intent(
-                                    Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
-                                    Uri.parse("package:$packageName"),
-                                ),
-                            )
-                            result.success(true)
-                        } catch (error: Exception) {
-                            result.success(false)
-                        }
-                    }
                     else -> result.notImplemented()
                 }
             }
-
-        // A tap that arrived while the engine was not ready yet.
-        val pending = pendingSession
-        if (pending != null) {
-            pendingSession = null
-            notifyChannel?.invokeMethod("open-session", pending)
-        }
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -132,14 +108,18 @@ class MainActivity : FlutterActivity() {
         setIntent(intent)
         val sessionId = sessionFrom(intent) ?: return
         // Drop the marker so a rotation or relaunch cannot replay the same tap.
-        intent.removeExtra(EXTRA_SESSION_ID)
-        intent.data = null
+        clearSessionMarkers(intent)
         val channel = notifyChannel
         if (channel == null) {
             pendingSession = sessionId
             return
         }
         channel.invokeMethod("open-session", sessionId)
+    }
+
+    private fun clearSessionMarkers(intent: Intent?) {
+        intent?.removeExtra(EXTRA_SESSION_ID)
+        intent?.data = null
     }
 
     /// Accepts either the extra or the session data URI. Extras can be dropped
@@ -266,6 +246,9 @@ class MainActivity : FlutterActivity() {
             .setContentText(body)
             .setStyle(NotificationCompat.BigTextStyle().bigText(body))
             .setPriority(NotificationCompat.PRIORITY_HIGH)
+            // Keep the answer preview off the lock screen; tapping still opens
+            // the conversation once the phone is unlocked.
+            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
             .setContentIntent(contentIntent)
             .setAutoCancel(true)
             .build()

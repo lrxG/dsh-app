@@ -548,10 +548,13 @@ class _ChatPageState extends State<ChatPage> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              _SheetAction(label: '重命名', onTap: () => Navigator.pop(ctx, 'rename')),
-              _SheetAction(label: '分叉会话', onTap: () => Navigator.pop(ctx, 'fork')),
+              if (!widget.isSubagent) ...[
+                _SheetAction(label: '重命名', onTap: () => Navigator.pop(ctx, 'rename')),
+                _SheetAction(label: '分叉会话', onTap: () => Navigator.pop(ctx, 'fork')),
+              ],
               _SheetAction(label: '子任务', onTap: () => Navigator.pop(ctx, 'subagents')),
-              _SheetAction(label: '后台任务', onTap: () => Navigator.pop(ctx, 'jobs')),
+              if (!widget.isSubagent)
+                _SheetAction(label: '后台任务', onTap: () => Navigator.pop(ctx, 'jobs')),
               const Divider(height: 0.5, thickness: 0.5, color: Color(0xFFE5E5EA)),
               _SheetAction(label: '取消', bold: true, onTap: () => Navigator.pop(ctx, 'cancel')),
             ],
@@ -887,6 +890,10 @@ class _ChatPageState extends State<ChatPage> {
           _forkArmed = false;
           _sessionId = id;
           _title = '$_title（分叉）';
+          // The fork starts idle; the old turn's busy flag belongs to the
+          // source session.
+          _busy = false;
+          _live = null;
         });
         SessionActivity.instance.activeSessionId = id;
         await _follow(auto: true);
@@ -1079,8 +1086,9 @@ class _ChatPageState extends State<ChatPage> {
         ),
         actions: [
           // Model chip mirrors the PC composer seat. An unconfigured session
-          // shows the catalog default (what a prompt would use).
-          if (_chipEnabled) ...[
+          // shows the catalog default (what a prompt would use). Subagents
+          // inherit their parent's model and cannot be re-selected.
+          if (_chipEnabled && !widget.isSubagent) ...[
             const SizedBox(width: 4),
             _modelChip(),
             const SizedBox(width: 2),

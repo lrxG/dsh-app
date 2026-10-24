@@ -38,8 +38,6 @@ dependencies:
   # pairing + sync stack
   mobile_scanner: ^7.1.1        # QR pairing scan
   dio: ^5.9.0                   # /connect exchange + unary RPC
-  dio_cookie_manager: ^3.3.0    # signed API cookie store
-  cookie_jar: ^4.0.8
   web_socket_channel: ^3.0.3    # /api/remote.mux
   shared_preferences: ^2.5.0    # persist PC origin + v1 cookie across launches
   image_picker: ^1.1.2          # camera / gallery attachments
