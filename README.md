@@ -23,7 +23,13 @@
    ```powershell
    git clone -b plugin https://github.com/lrxG/dsh-app dsh-plugin
    ```
-   然后 **dsh → 插件 → 添加插件**，粘贴 `dsh-plugin` 的绝对路径，按提示重启 dsh。（需要 `pnpm`；本包声明了 `dsh.bundle`。）
+   然后 **dsh → 插件 → 添加插件**，粘贴 `dsh-plugin` 的绝对路径，按提示重启 dsh。（本包声明了 `dsh.bundle`，插件管理器才会接受它。）
+
+   > **插件管理器需要 `pnpm`**（它用 pnpm 安装插件）。没装过的话，先装 [Node.js LTS](https://nodejs.org/)（一路 Next 即可），然后在 **PowerShell** 里执行：
+   > ```powershell
+   > npm install -g pnpm
+   > ```
+   > 关掉再重开一个 PowerShell，`pnpm -v` 能打印版本号就说明装好了。官方说明：[pnpm.io/installation](https://pnpm.io/installation)。
 3. **配对** —— 打开 **dsh → 设置 →「扫码配对」**，用 App 扫二维码；也可以点「手动粘贴配对链接」粘贴二维码下方的链接。
 
 完成。会话、模型、消息与 PC 实时同步，手机上可以直接续聊。

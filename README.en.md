@@ -23,7 +23,13 @@ Android client for **DeepSeek Harness (dsh)**. Pair once by scanning a QR from t
    ```powershell
    git clone -b plugin https://github.com/lrxG/dsh-app dsh-plugin
    ```
-   Then **dsh → Plugins → Add plugin** → paste the absolute path of `dsh-plugin` → restart dsh. (Requires `pnpm`; the package declares `dsh.bundle`.)
+   Then **dsh → Plugins → Add plugin** → paste the absolute path of `dsh-plugin` → restart dsh. (The package declares `dsh.bundle`, which is what the manager looks for.)
+
+   > **The plugin manager needs `pnpm`** (it installs plugins with it). If you don't have it: install [Node.js LTS](https://nodejs.org/) (keep clicking Next), then in **PowerShell**:
+   > ```powershell
+   > npm install -g pnpm
+   > ```
+   > Open a fresh PowerShell and check `pnpm -v` prints a version. Official docs: [pnpm.io/installation](https://pnpm.io/installation).
 3. **Pair** — open **dsh → Settings → 扫码配对**, scan the QR with the app. Or paste the URL under the QR via **手动粘贴配对链接**.
 
 Done. Sessions, models and messages sync from the PC; you can keep chatting from the phone.
