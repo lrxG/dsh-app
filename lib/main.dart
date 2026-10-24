@@ -286,7 +286,7 @@ class _PairGateState extends State<PairGate> {
       LinkPhase.unpaired =>
         '在 PC 上打开 dsh → 设置 →「扫码配对」，\n或手动粘贴配对链接。',
       LinkPhase.failed => _result?.error ?? '未知错误',
-      LinkPhase.paired => '会话与模型与 PC 实时同步',
+      LinkPhase.paired => '会话和模型与 PC 实时同步',
       LinkPhase.pairing => '',
     };
     return Scaffold(
