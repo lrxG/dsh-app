@@ -430,6 +430,8 @@ class _SessionsPageState extends State<SessionsPage> {
           timeText: _timeOf(row.updatedAt),
           modelText: _modelText(row),
           showDivider: i != rows.length,
+          first: i == 1,
+          last: i == rows.length,
           pinned: _pinned.contains(row.sessionId),
           onTap: () => _open(row),
           onLongPress: () => _showActions(row),
@@ -787,6 +789,8 @@ class _SessionRow extends StatelessWidget {
     required this.timeText,
     required this.modelText,
     required this.showDivider,
+    required this.first,
+    required this.last,
     required this.pinned,
     required this.onTap,
     required this.onLongPress,
@@ -796,6 +800,12 @@ class _SessionRow extends StatelessWidget {
   final String timeText;
   final String modelText;
   final bool showDivider;
+
+  /// Rows of one section form a single iOS grouped card: only the first and
+  /// last rows keep the outer corners, so abutting rows do not show the
+  /// pinched notch of two rounded cards meeting.
+  final bool first;
+  final bool last;
   final bool pinned;
   final VoidCallback onTap;
   final VoidCallback onLongPress;
@@ -808,7 +818,10 @@ class _SessionRow extends StatelessWidget {
     final running = summary.running || children > 0;
     return Material(
       color: Colors.white,
-      borderRadius: BorderRadius.circular(12),
+      borderRadius: BorderRadius.vertical(
+        top: Radius.circular(first ? 12 : 0),
+        bottom: Radius.circular(last ? 12 : 0),
+      ),
       clipBehavior: Clip.antiAlias,
       child: InkWell(
         onTap: onTap,
@@ -851,7 +864,15 @@ class _SessionRow extends StatelessWidget {
                   ],
                   Text(
                     timeText,
-                    style: const TextStyle(fontSize: 12, color: Color(0xFF8E8E93)),
+                    maxLines: 1,
+                    style: const TextStyle(
+                      fontSize: 12,
+                      color: Color(0xFF8E8E93),
+                      // Ordered column: with proportional digits "17:11" is
+                      // narrower than "05:25", so same-length timestamps
+                      // started at different x and the column looked ragged.
+                      fontFeatures: [FontFeature.tabularFigures()],
+                    ),
                   ),
                 ],
               ),

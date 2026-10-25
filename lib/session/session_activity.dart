@@ -46,6 +46,30 @@ class SessionActivity extends ChangeNotifier {
   bool _stopped = true;
   bool _foreground = true;
 
+  /// The chat page that is actually on screen right now. A notification is
+  /// suppressed only when the app is foreground *and* this is the session the
+  /// task belongs to; every other spot (list page, another chat, background)
+  /// deserves a notification.
+  String? _viewing;
+
+  bool isViewing(String sessionId) => _foreground && _viewing == sessionId;
+
+  /// The page is the current route, regardless of app foreground. Used to
+  /// avoid stacking a second copy when a notification is tapped for the chat
+  /// that is already open behind the lock screen.
+  bool isShowing(String sessionId) => _viewing == sessionId;
+
+  /// Register/unregister the chat page that became visible or was covered.
+  void setViewing(String sessionId) {
+    _viewing = sessionId;
+  }
+
+  /// Clear only if the caller still owns the slot (a pop can be reported after
+  /// the next page has already claimed it).
+  void clearViewing(String sessionId) {
+    if (_viewing == sessionId) _viewing = null;
+  }
+
   String? titleOf(String sessionId) => _rows[sessionId]?.title;
 
   String? parentOf(String sessionId) => _rows[sessionId]?.parentId;
@@ -65,6 +89,10 @@ class SessionActivity extends ChangeNotifier {
     return runningDescendants(sessionId) > 0;
   }
 
+  /// A session (or one of its subagents) is working right now. The chat page
+  /// uses this when it attached mid-turn and has no live stream of its own yet.
+  bool isRunning(String sessionId) => _isBusy(sessionId);
+
   void setForeground(bool value) {
     if (_foreground == value) return;
     _foreground = value;
@@ -74,8 +102,6 @@ class SessionActivity extends ChangeNotifier {
     unawaited(_prime(refresh: true));
     notifyListeners();
   }
-
-  bool get isForeground => _foreground;
 
   /// (Re)connect for one paired PC.
   Future<void> start({
@@ -223,12 +249,10 @@ class SessionActivity extends ChangeNotifier {
     if (_stopped) return;
     final root = _rootOf(sessionId);
     if (_rows[root]?.subagent ?? false) return; // subagents serve the session
-    // Foreground means the answer is already on screen (in the open chat, or a
-    // green dot in the list). Do NOT also look at "which chat page is open":
-    // that page stays on the stack while the app is in the background, and
-    // suppressing it would swallow exactly the notification the user waits
-    // for after leaving a conversation running.
-    if (_foreground) return;
+    // Only a foreground app showing this exact conversation already has the
+    // answer on screen. Foreground on the list, on another conversation, or in
+    // the background all need the notification the user is waiting for.
+    if (isViewing(root)) return;
     if (_isBusy(root)) return;
     final now = DateTime.now();
     final last = _notified[root];

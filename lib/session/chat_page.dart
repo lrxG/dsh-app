@@ -13,6 +13,7 @@ import 'jobs_page.dart';
 import 'messages.dart';
 import 'mux_client.dart';
 import 'notify.dart';
+import '../route_observer.dart';
 import 'session_activity.dart';
 
 /// Chat view of one session: durable snapshot → bubbles, live `event` frames
@@ -46,7 +47,7 @@ class ChatPage extends StatefulWidget {
   State<ChatPage> createState() => _ChatPageState();
 }
 
-class _ChatPageState extends State<ChatPage> {
+class _ChatPageState extends State<ChatPage> with RouteAware {
   MuxClient _mux = MuxClient(pcOrigin: '', cookieHeader: '');
   late final DshRpc _rpc;
   StreamSubscription<MuxEvent>? _sub;
@@ -72,6 +73,19 @@ class _ChatPageState extends State<ChatPage> {
 
   /// Local title (rename updates it without rebuilding the parent list).
   late String _title = widget.title;
+
+  /// Route visibility of this page, reported by [routeObserver]. Only a page
+  /// that is both visible and in a foreground app counts as "being read".
+  bool _routeSubscribed = false;
+  bool _visible = false;
+
+  /// The list is reversed (offset 0 = newest). While the user is reading older
+  /// messages this stays false: auto-follow pauses and streamed chunks are
+  /// buffered instead of repainting the list under their finger.
+  bool _atBottom = true;
+
+  /// Messages that arrived after the user scrolled away from the newest one.
+  int _unseen = 0;
 
   /// PC-synced model state: catalog + this session's durable selection.
   ModelCatalogData? _catalog;
@@ -119,12 +133,73 @@ class _ChatPageState extends State<ChatPage> {
     _input.addListener(() {
       if (mounted) setState(() {});
     });
-    SessionActivity.instance.addListener(_onActivity);
+    _scroll.addListener(_onScroll);
     _follow(auto: false);
   }
 
-  void _onActivity() {
-    if (mounted) setState(() {});
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_routeSubscribed) return;
+    final route = ModalRoute.of(context);
+    if (route is PageRoute) {
+      routeObserver.subscribe(this, route);
+      _routeSubscribed = true;
+      // subscribe() does not replay didPush for the page that is being built,
+      // so claim visibility here.
+      _setVisible(true);
+    }
+  }
+
+  // RouteAware: keep the activity map in sync with what is really on screen,
+  // so the completion notification knows whether this chat is being read.
+  @override
+  void didPush() => _setVisible(true);
+
+  @override
+  void didPopNext() => _setVisible(true);
+
+  @override
+  void didPushNext() => _setVisible(false);
+
+  @override
+  void didPop() => _setVisible(false);
+
+  void _setVisible(bool value) {
+    _visible = value;
+    final activity = SessionActivity.instance;
+    if (value) {
+      activity.setViewing(_sessionId);
+    } else {
+      activity.clearViewing(_sessionId);
+    }
+  }
+
+  void _onScroll() {
+    if (!_scroll.hasClients) return;
+    final atBottom = _scroll.position.pixels <= 24;
+    if (atBottom == _atBottom && !(atBottom && _unseen > 0)) return;
+    setState(() {
+      _atBottom = atBottom;
+      if (atBottom) _unseen = 0;
+    });
+  }
+
+  /// Snap (or glide) back to the newest message. In a reversed list that is
+  /// offset 0, so the whole operation is independent of content height.
+  void _jumpToLatest({bool animate = false}) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_scroll.hasClients) return;
+      if (animate) {
+        _scroll.animateTo(
+          0,
+          duration: const Duration(milliseconds: 220),
+          curve: Curves.easeOut,
+        );
+      } else {
+        _scroll.jumpTo(0);
+      }
+    });
   }
 
   /// Full re-dial of the follow stream. Manual taps reset the auto-retry
@@ -361,7 +436,6 @@ class _ChatPageState extends State<ChatPage> {
                   setSheet(() {
                     _pickScreen = _PickContext(
                       providerId: group.id,
-                      providerName: group.name,
                       model: m,
                     );
                     _pickEffort = null;
@@ -446,10 +520,18 @@ class _ChatPageState extends State<ChatPage> {
       _messages
         ..clear()
         ..addAll(bubbles);
+      // The snapshot is the whole transcript, so any live buffer left over
+      // from the previous socket would draw a second, stale copy of the same
+      // answer on top of the durable one it now contains.
+      _live = null;
+      _busy = false;
       _state = '已同步 ${_messages.length} 条消息';
       _stateColor = Colors.green;
+      _unseen = 0;
+      _atBottom = true;
     });
-    _scrollDown();
+    // A reconnect replaces the whole transcript; land on the newest message.
+    _jumpToLatest();
   }
 
   void _onDurableEvent(Map event) {
@@ -463,19 +545,22 @@ class _ChatPageState extends State<ChatPage> {
         _busy = false;
       }
       _messages.add(msg);
+      if (!_atBottom) _unseen++;
       _state = '已同步 ${_messages.length} 条消息';
       _stateColor = Colors.green;
     });
     if (wasBusy && msg.role == ChatRole.assistant) _notifyTurnDone(msg.text);
-    _scrollDown();
   }
 
   /// System notification when a turn that was running has settled.
   void _notifyTurnDone(String text) {
     // Subagents serve their session; only the main one raises a notification.
     if (widget.isSubagent) return;
-    // Looking at the app means the answer is already on screen.
-    if (SessionActivity.instance.isForeground) return;
+    // Only "this conversation is the visible page of a foreground app" may
+    // skip the notification. The list page, another chat, a covered route, or
+    // the background all deserve one.
+    final activity = SessionActivity.instance;
+    if (activity.isViewing(_sessionId)) return;
     // The stream-end frame and the durable echo describe the same completion.
     final now = DateTime.now();
     final last = _lastTurnNotify;
@@ -507,8 +592,19 @@ class _ChatPageState extends State<ChatPage> {
         });
       case 'chunk':
         final live = _live;
-        if (live == null) return;
-        live.applyChunk(frame);
+        if (live == null) {
+          // A socket that attached (or re-attached) mid-turn never saw
+          // `start`; adopt the chunk stream instead of dropping the answer.
+          final fresh = LiveAssistant()..applyChunk(frame);
+          setState(() {
+            _live = fresh;
+            _busy = true;
+            _state = '生成中…';
+            _stateColor = const Color(0xFF5E5CE6);
+          });
+        } else {
+          live.applyChunk(frame);
+        }
         _refreshLive();
       case 'end':
         final outcome = frame['outcome'];
@@ -529,11 +625,14 @@ class _ChatPageState extends State<ChatPage> {
   DateTime _lastLivePaint = DateTime.fromMillisecondsSinceEpoch(0);
 
   void _refreshLive() {
+    // Reading history: keep buffering the stream but do not repaint. A growing
+    // bubble would push the older messages around under the user's finger; the
+    // text appears as soon as they return to the newest message.
+    if (!_atBottom) return;
     final now = DateTime.now();
     if (now.difference(_lastLivePaint).inMilliseconds < 80) return;
     _lastLivePaint = now;
     setState(() {});
-    _scrollDown();
   }
 
   /// iOS action sheet: rename / fork / subagent list.
@@ -871,6 +970,9 @@ class _ChatPageState extends State<ChatPage> {
     if ((text.isEmpty && image == null && file == null) || _sending) return;
     setState(() => _sending = true);
     _input.clear();
+    // Sending is an explicit "I want the newest message": return to the
+    // bottom even if the user was reading history a second ago.
+    _jumpToLatest(animate: true);
     try {
       // The first prompt is what actually creates an armed fork, so leaving
       // the page without sending leaves no session behind.
@@ -898,6 +1000,10 @@ class _ChatPageState extends State<ChatPage> {
           _busy = false;
           _live = null;
         });
+        // The page now watches a different session; keep the activity map's
+        // "currently viewed" id in step, otherwise completions of the fork
+        // would look like another conversation and notify.
+        if (_visible) SessionActivity.instance.setViewing(_sessionId);
         await _follow(auto: true);
       }
       final content = <Map<String, dynamic>>[
@@ -1027,20 +1133,10 @@ class _ChatPageState extends State<ChatPage> {
         _stateColor = c;
       });
 
-  void _scrollDown() {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!_scroll.hasClients) return;
-      _scroll.animateTo(
-        _scroll.position.maxScrollExtent,
-        duration: const Duration(milliseconds: 200),
-        curve: Curves.easeOut,
-      );
-    });
-  }
-
   @override
   void dispose() {
-    SessionActivity.instance.removeListener(_onActivity);
+    if (_routeSubscribed) routeObserver.unsubscribe(this);
+    if (_visible) SessionActivity.instance.clearViewing(_sessionId);
     _retryTimer?.cancel();
     _sub?.cancel();
     _mux.close();
@@ -1051,20 +1147,9 @@ class _ChatPageState extends State<ChatPage> {
 
   @override
   Widget build(BuildContext context) {
-    final bubbles = [
-      for (final m in _messages) _bubble(m),
-      // Live streaming attempt renders as a provisional assistant bubble.
-      if (_live case final live? when live.hasContent)
-        _bubble(ChatMessage(
-          key: 'live',
-          role: ChatRole.assistant,
-          seq: -1,
-          text: live.text.toString(),
-          reasoning: live.reasoning.isEmpty
-              ? null
-              : live.reasoning.toString().substring(0, live.reasoning.length.clamp(0, 600)),
-        )),
-    ];
+    final live = _live;
+    final liveBubble = live != null && live.hasContent;
+    final count = _messages.length + (liveBubble ? 1 : 0);
 
     return Scaffold(
       backgroundColor: const Color(0xFFF2F2F7),
@@ -1073,25 +1158,62 @@ class _ChatPageState extends State<ChatPage> {
         surfaceTintColor: Colors.transparent,
         foregroundColor: const Color(0xFF007AFF),
         elevation: 0,
-        centerTitle: true,
-        title: Text(
-          _title,
-          overflow: TextOverflow.ellipsis,
-          style: const TextStyle(
-            fontSize: 17,
-            fontWeight: FontWeight.w600,
-            color: Color(0xFF1C1C1E),
-          ),
+        centerTitle: false,
+        // iOS headers keep the title next to the back chevron; centering it
+        // between variable-length actions left a dead gap on the left.
+        leadingWidth: 48,
+        titleSpacing: 0,
+        toolbarHeight: 58,
+        title: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              _title,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                fontSize: 17,
+                fontWeight: FontWeight.w600,
+                color: Color(0xFF1C1C1E),
+              ),
+            ),
+            // The model seat lives under the title instead of in a header
+            // pill: both names are variable-length, so giving each its own
+            // line is the only layout that never squeezes either one.
+            if (_chipEnabled && !widget.isSubagent)
+              GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: _pickingModel ? null : _pickModel,
+                child: Padding(
+                  padding: const EdgeInsets.only(top: 1, right: 6),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.memory,
+                          size: 12, color: Color(0xFF8E8E93)),
+                      const SizedBox(width: 3),
+                      Flexible(
+                        child: Text(
+                          _chipLabel(),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 11.5,
+                            color: Color(0xFF8E8E93),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 1),
+                      const Icon(Icons.expand_more_rounded,
+                          size: 14, color: Color(0xFF8E8E93)),
+                    ],
+                  ),
+                ),
+              ),
+          ],
         ),
         actions: [
-          // Model chip mirrors the PC composer seat. An unconfigured session
-          // shows the catalog default (what a prompt would use). Subagents
-          // inherit their parent's model and cannot be re-selected.
-          if (_chipEnabled && !widget.isSubagent) ...[
-            const SizedBox(width: 4),
-            _modelChip(),
-            const SizedBox(width: 2),
-          ],
           IconButton(
             padding: EdgeInsets.zero,
             visualDensity: VisualDensity.compact,
@@ -1099,18 +1221,7 @@ class _ChatPageState extends State<ChatPage> {
             tooltip: '更多',
             onPressed: _showMore,
           ),
-          IconButton(
-            padding: EdgeInsets.zero,
-            visualDensity: VisualDensity.compact,
-            icon: Icon(
-              _busy ? Icons.sync : Icons.arrow_circle_down,
-              size: 24,
-              color: _busy ? const Color(0xFF5E5CE6) : Colors.grey.shade400,
-            ),
-            tooltip: _busy ? '正在生成（将发送则打断）' : '空闲',
-            onPressed: null,
-          ),
-          const SizedBox(width: 6),
+          const SizedBox(width: 4),
         ],
       ),
       body: Column(
@@ -1121,16 +1232,38 @@ class _ChatPageState extends State<ChatPage> {
             color: const Color(0xFFF2F2F7),
             padding: const EdgeInsets.fromLTRB(16, 2, 16, 8),
             child: Row(children: [
-              Container(
-                width: 7,
-                height: 7,
-                decoration: BoxDecoration(color: _stateColor, shape: BoxShape.circle),
-              ),
-              const SizedBox(width: 7),
+              // The locally followed stream does not always know it attached
+              // mid-turn (a long tool call emits nothing). Falling back to the
+              // activity map keeps this line honest about work in progress.
               Expanded(
-                child: Text(
-                  _state,
-                  style: const TextStyle(fontSize: 12, color: Color(0xFF8E8E93)),
+                child: AnimatedBuilder(
+                  animation: SessionActivity.instance,
+                  builder: (context, _) {
+                    final running = !_busy &&
+                        SessionActivity.instance.isRunning(_sessionId);
+                    return Row(
+                      children: [
+                        Container(
+                          width: 7,
+                          height: 7,
+                          decoration: BoxDecoration(
+                            color: running ? const Color(0xFF30A14E) : _stateColor,
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                        const SizedBox(width: 7),
+                        Expanded(
+                          child: Text(
+                            running ? '$_state · 执行中' : _state,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                                fontSize: 12, color: Color(0xFF8E8E93)),
+                          ),
+                        ),
+                      ],
+                    );
+                  },
                 ),
               ),
               if (_reconnectable)
@@ -1147,35 +1280,45 @@ class _ChatPageState extends State<ChatPage> {
                     ),
                   ),
                 ),
-              if (SessionActivity.instance.runningDescendants(_sessionId)
-                  case final running when running > 0) ...[
-                const SizedBox(width: 10),
-                GestureDetector(
-                  onTap: _openSubagents,
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const SizedBox(
-                        width: 9,
-                        height: 9,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 1.8,
-                          color: Color(0xFF30D158),
-                        ),
+              // Only this little badge depends on the activity map; wrapping it
+              // in an AnimatedBuilder keeps status frames from rebuilding the
+              // whole transcript.
+              AnimatedBuilder(
+                animation: SessionActivity.instance,
+                builder: (context, _) {
+                  final running =
+                      SessionActivity.instance.runningDescendants(_sessionId);
+                  if (running <= 0) return const SizedBox.shrink();
+                  return Padding(
+                    padding: const EdgeInsets.only(left: 10),
+                    child: GestureDetector(
+                      onTap: _openSubagents,
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const SizedBox(
+                            width: 9,
+                            height: 9,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 1.8,
+                              color: Color(0xFF30D158),
+                            ),
+                          ),
+                          const SizedBox(width: 5),
+                          Text(
+                            '子智能体 ×$running',
+                            style: const TextStyle(
+                              fontSize: 12,
+                              color: Color(0xFF30A14E),
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ],
                       ),
-                      const SizedBox(width: 5),
-                      Text(
-                        '子智能体 ×$running',
-                        style: const TextStyle(
-                          fontSize: 12,
-                          color: Color(0xFF30A14E),
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
+                    ),
+                  );
+                },
+              ),
             ]),
           ),
           if (_forkArmed)
@@ -1206,18 +1349,76 @@ class _ChatPageState extends State<ChatPage> {
             ),
           const Divider(height: 1, thickness: 0.5, color: Color(0xFFE5E5EA)),
           Expanded(
-            child: bubbles.isEmpty
-                ? Center(
-                    child: Text(
-                      _stateColor == Colors.green ? '空会话 · 发条消息试试' : '等待同步…',
-                      style: const TextStyle(color: Color(0xFF8E8E93), fontSize: 14),
-                    ),
+            child: count == 0
+                ? AnimatedBuilder(
+                    animation: SessionActivity.instance,
+                    builder: (context, _) {
+                      final running =
+                          SessionActivity.instance.isRunning(_sessionId);
+                      if (running) {
+                        return Center(
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: const [
+                              SizedBox(
+                                width: 18,
+                                height: 18,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: Color(0xFF8E8E93),
+                                ),
+                              ),
+                              SizedBox(height: 10),
+                              Text(
+                                '正在执行 · 等待模型返回…',
+                                style: TextStyle(
+                                    color: Color(0xFF8E8E93), fontSize: 14),
+                              ),
+                            ],
+                          ),
+                        );
+                      }
+                      return Center(
+                        child: Text(
+                          _stateColor == Colors.green
+                              ? '空会话 · 发条消息试试'
+                              : '等待同步…',
+                          style: const TextStyle(
+                              color: Color(0xFF8E8E93), fontSize: 14),
+                        ),
+                      );
+                    },
                   )
-                : ListView.builder(
-                    controller: _scroll,
-                    padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
-                    itemCount: bubbles.length,
-                    itemBuilder: (_, i) => bubbles[i],
+                : Stack(
+                    children: [
+                      // Reversed: offset 0 is the newest message, so opening a
+                      // session (or the keyboard resizing the viewport) lands
+                      // on "now" without any scroll-after-layout dance. The
+                      // newest item is at index 0; older ones follow.
+                      ListView.builder(
+                        controller: _scroll,
+                        reverse: true,
+                        padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+                        itemCount: count,
+                        itemBuilder: (context, i) {
+                          if (liveBubble && i == 0) {
+                            return _bubble(_liveMessage(live), streaming: true);
+                          }
+                          final index =
+                              _messages.length - 1 - (i - (liveBubble ? 1 : 0));
+                          return _bubble(_messages[index]);
+                        },
+                      ),
+                      if (!_atBottom)
+                        Positioned(
+                          right: 14,
+                          bottom: 12,
+                          child: _LatestButton(
+                            unseen: _unseen,
+                            onTap: () => _jumpToLatest(animate: true),
+                          ),
+                        ),
+                    ],
                   ),
           ),
           const Divider(height: 1, thickness: 0.5, color: Color(0xFFE5E5EA)),
@@ -1399,45 +1600,29 @@ class _ChatPageState extends State<ChatPage> {
     );
   }
 
-  /// The AppBar model chip (pill) opens the PC catalog picker.
-  Widget _modelChip() {
-    return GestureDetector(
-      onTap: _pickingModel ? null : _pickModel,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-        decoration: BoxDecoration(
-          color: const Color(0xFF007AFF).withValues(alpha: 0.10),
-          borderRadius: BorderRadius.circular(15),
-        ),
-        constraints: const BoxConstraints(maxWidth: 170),
-        child: Row(mainAxisSize: MainAxisSize.min, children: [
-          const Icon(Icons.memory, size: 15, color: Color(0xFF007AFF)),
-          const SizedBox(width: 5),
-          Flexible(
-            child: Text(
-              _chipLabel(),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                fontSize: 13,
-                color: Color(0xFF007AFF),
-                fontWeight: FontWeight.w500,
-              ),
-            ),
-          ),
-          const Icon(Icons.expand_more_rounded, size: 15, color: Color(0xFF007AFF)),
-        ]),
-      ),
+  ChatMessage _liveMessage(LiveAssistant live) {
+    final reasoning = live.reasoning.toString();
+    return ChatMessage(
+      key: 'live',
+      role: ChatRole.assistant,
+      seq: -1,
+      text: live.text.toString(),
+      reasoning: reasoning.isEmpty
+          ? null
+          : (reasoning.length > 4000
+              ? '${reasoning.substring(0, 4000)}…'
+              : reasoning),
     );
   }
 
-  Widget _bubble(ChatMessage m) {
+  Widget _bubble(ChatMessage m, {bool streaming = false}) {
     final isUser = m.role == ChatRole.user;
     final align = isUser ? CrossAxisAlignment.end : CrossAxisAlignment.start;
     final color = isUser ? const Color(0xFF007AFF) : const Color(0xFFE9E9EB);
     final fg = isUser ? Colors.white : const Color(0xFF1C1C1E);
 
     return Align(
+      key: ValueKey(m.key),
       alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
       child: Container(
         margin: const EdgeInsets.symmetric(vertical: 3),
@@ -1458,28 +1643,10 @@ class _ChatPageState extends State<ChatPage> {
             if (m.reasoning != null && !isUser)
               Padding(
                 padding: const EdgeInsets.only(bottom: 6),
-                child: Theme(
-                  data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
-                  child: ExpansionTile(
-                    tilePadding: EdgeInsets.zero,
-                    childrenPadding: EdgeInsets.zero,
-                    iconColor: const Color(0xFF8E8E93),
-                    collapsedIconColor: const Color(0xFF8E8E93),
-                    title: Text(
-                      '思考过程',
-                      style: const TextStyle(fontSize: 11, color: Color(0xFF8E8E93)),
-                    ),
-                    children: [
-                      Align(
-                        alignment: Alignment.centerLeft,
-                        child: Text(
-                          m.reasoning!,
-                          style: const TextStyle(
-                              fontSize: 12, color: Color(0xFF6D6D72), height: 1.4),
-                        ),
-                      ),
-                    ],
-                  ),
+                child: _ReasoningBlock(
+                  key: ValueKey('think-${m.key}'),
+                  text: m.reasoning!,
+                  live: streaming,
                 ),
               ),
             if (m.tools.isNotEmpty && !isUser)
@@ -1516,11 +1683,210 @@ class _ChatPageState extends State<ChatPage> {
                   ],
                 ),
               ),
-            SelectableText(
-              m.text,
-              style: TextStyle(color: fg, fontSize: 15.5, height: 1.4),
-            ),
+            if (m.text.trim().isNotEmpty)
+              SelectableText(
+                m.text,
+                style: TextStyle(color: fg, fontSize: 15.5, height: 1.4),
+              ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Compact "思考过程" block shown above an assistant answer.
+///
+/// Collapsed it is a one-tap header plus a two-line, greyed preview of the
+/// thought, so it is obvious there is content without opening it. Expanded it
+/// shows the reasoning in a bounded, independently scrollable area (a long
+/// chain of thought must not turn one bubble into a page-long wall).
+class _ReasoningBlock extends StatefulWidget {
+  const _ReasoningBlock({super.key, required this.text, this.live = false});
+
+  final String text;
+
+  /// The model is still thinking: show a spinner and a "正在思考…" label.
+  final bool live;
+
+  @override
+  State<_ReasoningBlock> createState() => _ReasoningBlockState();
+}
+
+class _ReasoningBlockState extends State<_ReasoningBlock> {
+  bool _expanded = false;
+  final _inner = ScrollController();
+
+  @override
+  void didUpdateWidget(covariant _ReasoningBlock oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // Following a live thought: keep the newest line visible inside the block.
+    if (widget.live && _expanded && oldWidget.text != widget.text) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || !_inner.hasClients) return;
+        _inner.jumpTo(_inner.position.maxScrollExtent);
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _inner.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final text = widget.text.trim();
+    // The preview is one flow of text; only its head matters, so do not run
+    // the whitespace pass over a potentially long thought on every chunk.
+    final head = text.length > 400 ? text.substring(0, 400) : text;
+    final preview = head.replaceAll(RegExp(r'\s+'), ' ').trim();
+
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.55),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: const Color(0x11000000)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          InkWell(
+            borderRadius: BorderRadius.circular(10),
+            onTap: () => setState(() => _expanded = !_expanded),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(9, 7, 5, 7),
+              child: Row(
+                children: [
+                  if (widget.live)
+                    const SizedBox(
+                      width: 12,
+                      height: 12,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 1.5,
+                        color: Color(0xFF8E8E93),
+                      ),
+                    )
+                  else
+                    const Icon(Icons.psychology_alt_outlined,
+                        size: 14, color: Color(0xFF8E8E93)),
+                  const SizedBox(width: 6),
+                  Text(
+                    widget.live ? '正在思考…' : '思考过程',
+                    style: const TextStyle(
+                      fontSize: 11.5,
+                      height: 1.1,
+                      fontWeight: FontWeight.w500,
+                      color: Color(0xFF6D6D72),
+                    ),
+                  ),
+                  const Spacer(),
+                  AnimatedRotation(
+                    turns: _expanded ? 0.5 : 0,
+                    duration: const Duration(milliseconds: 180),
+                    child: const Icon(Icons.keyboard_arrow_down_rounded,
+                        size: 18, color: Color(0xFF8E8E93)),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          if (!_expanded && preview.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(9, 0, 9, 8),
+              child: Text(
+                preview,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontSize: 11.5,
+                  height: 1.4,
+                  color: Color(0xFF8E8E93),
+                ),
+              ),
+            ),
+          AnimatedSize(
+            duration: const Duration(milliseconds: 200),
+            curve: Curves.easeOut,
+            alignment: Alignment.topCenter,
+            child: _expanded
+                ? ConstrainedBox(
+                    constraints: const BoxConstraints(maxHeight: 260),
+                    child: Scrollbar(
+                      controller: _inner,
+                      child: SingleChildScrollView(
+                        controller: _inner,
+                        padding: const EdgeInsets.fromLTRB(9, 0, 9, 9),
+                        child: Text(
+                          widget.text,
+                          style: const TextStyle(
+                            fontSize: 12.5,
+                            height: 1.5,
+                            color: Color(0xFF48484A),
+                          ),
+                        ),
+                      ),
+                    ),
+                  )
+                : const SizedBox(width: double.infinity, height: 0),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Floating "back to the newest message" pill, shown whenever the user has
+/// scrolled into history. It carries a count when new messages landed meanwhile.
+class _LatestButton extends StatelessWidget {
+  const _LatestButton({required this.unseen, required this.onTap});
+
+  final int unseen;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(18),
+        onTap: onTap,
+        child: Container(
+          padding: EdgeInsets.symmetric(
+            horizontal: unseen > 0 ? 12 : 9,
+            vertical: 8,
+          ),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(color: const Color(0x14000000)),
+            boxShadow: const [
+              BoxShadow(
+                color: Color(0x1A000000),
+                blurRadius: 10,
+                offset: Offset(0, 2),
+              ),
+            ],
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.keyboard_arrow_down_rounded,
+                  size: 19, color: Color(0xFF007AFF)),
+              if (unseen > 0) ...[
+                const SizedBox(width: 2),
+                Text(
+                  '$unseen 条新消息',
+                  style: const TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w500,
+                    color: Color(0xFF007AFF),
+                  ),
+                ),
+              ],
+            ],
+          ),
         ),
       ),
     );
@@ -1531,12 +1897,10 @@ class _ChatPageState extends State<ChatPage> {
 class _PickContext {
   const _PickContext({
     required this.providerId,
-    required this.providerName,
     required this.model,
   });
 
   final String providerId;
-  final String providerName;
   final CatalogModel model;
 }
 

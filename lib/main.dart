@@ -7,6 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'pairing/scan_page.dart';
 import 'pairing/pair_client.dart';
 import 'pairing/pair_store.dart';
+import 'route_observer.dart';
 import 'session/approval_center.dart';
 import 'session/chat_page.dart';
 import 'session/dsh_client.dart';
@@ -68,6 +69,7 @@ class DshApp extends StatelessWidget {
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.all(Radius.circular(14))),
         ),
       ),
+      navigatorObservers: [routeObserver],
       home: const PairGate(),
     );
   }
@@ -215,6 +217,10 @@ class _PairGateState extends State<PairGate> with WidgetsBindingObserver {
       }
     }
     if (!mounted) return;
+    // The notification is for the conversation that is already the current
+    // page (e.g. the app was backgrounded mid-turn): resuming is enough,
+    // pushing another copy would just stack two identical chats.
+    if (activity.isShowing(sessionId)) return;
     Navigator.of(context, rootNavigator: true).push(
       MaterialPageRoute(
         builder: (_) => ChatPage(

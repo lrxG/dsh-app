@@ -117,7 +117,7 @@ String? _reasoningOf(Object? blocks) {
       .toList();
   if (parts.isEmpty) return null;
   final joined = parts.join('\n');
-  return joined.length > 600 ? '${joined.substring(0, 600)}…' : joined;
+  return joined.length > 4000 ? '${joined.substring(0, 4000)}…' : joined;
 }
 
 /// Decode an opening `snapshot` frame into bubbles (ordered by seq).
@@ -132,6 +132,8 @@ List<ChatMessage> decodeSnapshot(dynamic value) {
     if (event is! Map) continue;
     if (!isMessageEvent(event)) continue;
     final msg = decodeEvent(event);
+    // Tool steps carry reasoning but no user-visible answer; only bubbles with
+    // actual text belong in the transcript (the thinking block rides along).
     if (msg != null && msg.text.trim().isNotEmpty) out.add(msg);
   }
   return out;
