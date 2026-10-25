@@ -10,6 +10,7 @@ import 'pairing/pair_store.dart';
 import 'route_observer.dart';
 import 'session/approval_center.dart';
 import 'session/chat_page.dart';
+import 'session/chat_route.dart';
 import 'session/dsh_client.dart';
 import 'session/notify.dart';
 import 'session/power.dart';
@@ -222,7 +223,7 @@ class _PairGateState extends State<PairGate> with WidgetsBindingObserver {
     // pushing another copy would just stack two identical chats.
     if (activity.isShowing(sessionId)) return;
     Navigator.of(context, rootNavigator: true).push(
-      MaterialPageRoute(
+      ChatRoute(
         builder: (_) => ChatPage(
           sessionId: sessionId,
           title: title ?? '会话',

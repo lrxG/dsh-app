@@ -13,6 +13,7 @@ import 'jobs_page.dart';
 import 'messages.dart';
 import 'mux_client.dart';
 import 'notify.dart';
+import 'chat_route.dart';
 import '../route_observer.dart';
 import 'session_activity.dart';
 
@@ -78,6 +79,13 @@ class _ChatPageState extends State<ChatPage> with RouteAware {
   /// that is both visible and in a foreground app counts as "being read".
   bool _routeSubscribed = false;
   bool _visible = false;
+
+  /// The push transition has finished. The snapshot lands in ~50 ms, i.e. in
+  /// the middle of the slide, so until the page has settled the transcript
+  /// area shows a skeleton instead of swapping a whole conversation in while
+  /// the page is still moving.
+  bool _entered = false;
+  Animation<double>? _enterAnimation;
 
   /// The list is reversed (offset 0 = newest). While the user is reading older
   /// messages this stays false: auto-follow pauses and streamed chunks are
@@ -148,7 +156,26 @@ class _ChatPageState extends State<ChatPage> with RouteAware {
       // subscribe() does not replay didPush for the page that is being built,
       // so claim visibility here.
       _setVisible(true);
+      _bindEnterAnimation(route);
     }
+  }
+
+  /// Mark the page as "settled" once the push transition is over, so the
+  /// first transcript paint happens on a motionless screen.
+  void _bindEnterAnimation(PageRoute<dynamic> route) {
+    final animation = route.animation;
+    if (animation == null || animation.isCompleted) {
+      _entered = true;
+      return;
+    }
+    _enterAnimation = animation..addStatusListener(_onEnterStatus);
+  }
+
+  void _onEnterStatus(AnimationStatus status) {
+    if (status != AnimationStatus.completed || _entered) return;
+    setState(() => _entered = true);
+    // Deferred by [_loadModelState] until the page stopped moving.
+    if (_catalog == null) _loadModelState();
   }
 
   // RouteAware: keep the activity map in sync with what is really on screen,
@@ -250,6 +277,11 @@ class _ChatPageState extends State<ChatPage> with RouteAware {
 
   /// Pull the PC catalog + this session's projected selection (parallel).
   Future<void> _loadModelState() async {
+    // The header grows a second line the moment the catalog lands. Requesting
+    // it during the push made the title wiggle while the page was still
+    // sliding, so hold it until the page has settled; [_onEnterStatus] calls
+    // this again.
+    if (!_entered) return;
     try {
       final results = await Future.wait([
         _rpc.modelCatalog().catchError((Object _) => null as ModelCatalogData?),
@@ -814,7 +846,7 @@ class _ChatPageState extends State<ChatPage> with RouteAware {
                       Navigator.pop(ctx);
                       Navigator.push(
                         context,
-                        MaterialPageRoute(
+                        ChatRoute(
                           builder: (_) => ChatPage(
                             sessionId: child.sessionId,
                             title: child.title ?? '子任务',
@@ -1135,6 +1167,7 @@ class _ChatPageState extends State<ChatPage> with RouteAware {
 
   @override
   void dispose() {
+    _enterAnimation?.removeStatusListener(_onEnterStatus);
     if (_routeSubscribed) routeObserver.unsubscribe(this);
     if (_visible) SessionActivity.instance.clearViewing(_sessionId);
     _retryTimer?.cancel();
@@ -1226,100 +1259,106 @@ class _ChatPageState extends State<ChatPage> with RouteAware {
       ),
       body: Column(
         children: [
-          // Sync/status strip
-          Container(
-            width: double.infinity,
-            color: const Color(0xFFF2F2F7),
-            padding: const EdgeInsets.fromLTRB(16, 2, 16, 8),
-            child: Row(children: [
-              // The locally followed stream does not always know it attached
-              // mid-turn (a long tool call emits nothing). Falling back to the
-              // activity map keeps this line honest about work in progress.
-              Expanded(
-                child: AnimatedBuilder(
-                  animation: SessionActivity.instance,
-                  builder: (context, _) {
-                    final running = !_busy &&
-                        SessionActivity.instance.isRunning(_sessionId);
-                    return Row(
-                      children: [
-                        Container(
-                          width: 7,
-                          height: 7,
-                          decoration: BoxDecoration(
-                            color: running ? const Color(0xFF30A14E) : _stateColor,
-                            shape: BoxShape.circle,
-                          ),
-                        ),
-                        const SizedBox(width: 7),
-                        Expanded(
-                          child: Text(
-                            running ? '$_state · 执行中' : _state,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                                fontSize: 12, color: Color(0xFF8E8E93)),
-                          ),
-                        ),
-                      ],
-                    );
-                  },
-                ),
-              ),
-              if (_reconnectable)
-                GestureDetector(
-                  onTap: _needRescan
-                      ? () => Navigator.of(context).popUntil((r) => r.isFirst)
-                      : () => _follow(auto: false),
-                  child: Text(
-                    _needRescan ? '重新配对' : '重连',
-                    style: TextStyle(
-                      color: const Color(0xFF007AFF),
-                      fontSize: 14,
-                      fontWeight: _needRescan ? FontWeight.w600 : FontWeight.w400,
-                    ),
-                  ),
-                ),
-              // Only this little badge depends on the activity map; wrapping it
-              // in an AnimatedBuilder keeps status frames from rebuilding the
-              // whole transcript.
-              AnimatedBuilder(
-                animation: SessionActivity.instance,
-                builder: (context, _) {
-                  final running =
-                      SessionActivity.instance.runningDescendants(_sessionId);
-                  if (running <= 0) return const SizedBox.shrink();
-                  return Padding(
-                    padding: const EdgeInsets.only(left: 10),
-                    child: GestureDetector(
-                      onTap: _openSubagents,
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
+          // Sync/status strip. It fades in only after the page has settled: its
+          // text flips from "连接中…" to "已同步 N 条消息" within the first
+          // 100 ms, which used to happen in the middle of the push animation.
+          AnimatedOpacity(
+            opacity: _entered ? 1 : 0,
+            duration: const Duration(milliseconds: 180),
+            child: Container(
+              width: double.infinity,
+              color: const Color(0xFFF2F2F7),
+              padding: const EdgeInsets.fromLTRB(16, 2, 16, 8),
+              child: Row(children: [
+                // The locally followed stream does not always know it attached
+                // mid-turn (a long tool call emits nothing). Falling back to the
+                // activity map keeps this line honest about work in progress.
+                Expanded(
+                  child: AnimatedBuilder(
+                    animation: SessionActivity.instance,
+                    builder: (context, _) {
+                      final running = !_busy &&
+                          SessionActivity.instance.isRunning(_sessionId);
+                      return Row(
                         children: [
-                          const SizedBox(
-                            width: 9,
-                            height: 9,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 1.8,
-                              color: Color(0xFF30D158),
+                          Container(
+                            width: 7,
+                            height: 7,
+                            decoration: BoxDecoration(
+                              color: running ? const Color(0xFF30A14E) : _stateColor,
+                              shape: BoxShape.circle,
                             ),
                           ),
-                          const SizedBox(width: 5),
-                          Text(
-                            '子智能体 ×$running',
-                            style: const TextStyle(
-                              fontSize: 12,
-                              color: Color(0xFF30A14E),
-                              fontWeight: FontWeight.w500,
+                          const SizedBox(width: 7),
+                          Expanded(
+                            child: Text(
+                              running ? '$_state · 执行中' : _state,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                  fontSize: 12, color: Color(0xFF8E8E93)),
                             ),
                           ),
                         ],
+                      );
+                    },
+                  ),
+                ),
+                if (_reconnectable)
+                  GestureDetector(
+                    onTap: _needRescan
+                        ? () => Navigator.of(context).popUntil((r) => r.isFirst)
+                        : () => _follow(auto: false),
+                    child: Text(
+                      _needRescan ? '重新配对' : '重连',
+                      style: TextStyle(
+                        color: const Color(0xFF007AFF),
+                        fontSize: 14,
+                        fontWeight: _needRescan ? FontWeight.w600 : FontWeight.w400,
                       ),
                     ),
-                  );
-                },
-              ),
-            ]),
+                  ),
+                // Only this little badge depends on the activity map; wrapping it
+                // in an AnimatedBuilder keeps status frames from rebuilding the
+                // whole transcript.
+                AnimatedBuilder(
+                  animation: SessionActivity.instance,
+                  builder: (context, _) {
+                    final running =
+                        SessionActivity.instance.runningDescendants(_sessionId);
+                    if (running <= 0) return const SizedBox.shrink();
+                    return Padding(
+                      padding: const EdgeInsets.only(left: 10),
+                      child: GestureDetector(
+                        onTap: _openSubagents,
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const SizedBox(
+                              width: 9,
+                              height: 9,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 1.8,
+                                color: Color(0xFF30D158),
+                              ),
+                            ),
+                            const SizedBox(width: 5),
+                            Text(
+                              '子智能体 ×$running',
+                              style: const TextStyle(
+                                fontSize: 12,
+                                color: Color(0xFF30A14E),
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ]),
+            ),
           ),
           if (_forkArmed)
             Container(
@@ -1349,77 +1388,87 @@ class _ChatPageState extends State<ChatPage> with RouteAware {
             ),
           const Divider(height: 1, thickness: 0.5, color: Color(0xFFE5E5EA)),
           Expanded(
-            child: count == 0
-                ? AnimatedBuilder(
-                    animation: SessionActivity.instance,
-                    builder: (context, _) {
-                      final running =
-                          SessionActivity.instance.isRunning(_sessionId);
-                      if (running) {
-                        return Center(
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: const [
-                              SizedBox(
-                                width: 18,
-                                height: 18,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  color: Color(0xFF8E8E93),
-                                ),
+            // Until the push transition finishes, show skeleton bubbles at the
+            // bottom of the viewport. The snapshot lands in ~50 ms, and swapping
+            // a full transcript in while the page is still sliding reads as a cut
+            // rather than a transition.
+            child: !_entered
+                ? const _ChatSkeleton()
+                : count == 0
+                    ? AnimatedBuilder(
+                        animation: SessionActivity.instance,
+                        builder: (context, _) {
+                          final running =
+                              SessionActivity.instance.isRunning(_sessionId);
+                          if (running) {
+                            return Center(
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: const [
+                                  SizedBox(
+                                    width: 18,
+                                    height: 18,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                      color: Color(0xFF8E8E93),
+                                    ),
+                                  ),
+                                  SizedBox(height: 10),
+                                  Text(
+                                    '正在执行 · 等待模型返回…',
+                                    style: TextStyle(
+                                        color: Color(0xFF8E8E93), fontSize: 14),
+                                  ),
+                                ],
                               ),
-                              SizedBox(height: 10),
-                              Text(
-                                '正在执行 · 等待模型返回…',
-                                style: TextStyle(
-                                    color: Color(0xFF8E8E93), fontSize: 14),
-                              ),
-                            ],
-                          ),
-                        );
-                      }
-                      return Center(
-                        child: Text(
-                          _stateColor == Colors.green
-                              ? '空会话 · 发条消息试试'
-                              : '等待同步…',
-                          style: const TextStyle(
-                              color: Color(0xFF8E8E93), fontSize: 14),
-                        ),
-                      );
-                    },
-                  )
-                : Stack(
-                    children: [
-                      // Reversed: offset 0 is the newest message, so opening a
-                      // session (or the keyboard resizing the viewport) lands
-                      // on "now" without any scroll-after-layout dance. The
-                      // newest item is at index 0; older ones follow.
-                      ListView.builder(
-                        controller: _scroll,
-                        reverse: true,
-                        padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
-                        itemCount: count,
-                        itemBuilder: (context, i) {
-                          if (liveBubble && i == 0) {
-                            return _bubble(_liveMessage(live), streaming: true);
+                            );
                           }
-                          final index =
-                              _messages.length - 1 - (i - (liveBubble ? 1 : 0));
-                          return _bubble(_messages[index]);
+                          return Center(
+                            child: Text(
+                              _stateColor == Colors.green
+                                  ? '空会话 · 发条消息试试'
+                                  : '等待同步…',
+                              style: const TextStyle(
+                                  color: Color(0xFF8E8E93), fontSize: 14),
+                            ),
+                          );
                         },
-                      ),
-                      if (!_atBottom)
-                        Positioned(
-                          right: 14,
-                          bottom: 12,
-                          child: _LatestButton(
-                            unseen: _unseen,
-                            onTap: () => _jumpToLatest(animate: true),
+                      )
+                    : Stack(
+                        children: [
+                          // Reversed: offset 0 is the newest message, so opening a
+                          // session (or the keyboard resizing the viewport) lands
+                          // on "now" without any scroll-after-layout dance. The
+                          // newest item is at index 0; older ones follow.
+                          RepaintBoundary(
+                            child: ListView.builder(
+                              controller: _scroll,
+                              reverse: true,
+                              padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+                              itemCount: count,
+                              itemBuilder: (context, i) {
+                                if (liveBubble && i == 0) {
+                                  return _bubble(_liveMessage(live),
+                                      streaming: true);
+                                }
+                                final index = _messages.length -
+                                    1 -
+                                    (i - (liveBubble ? 1 : 0));
+                                return _bubble(_messages[index]);
+                              },
+                            ),
                           ),
-                        ),
-                    ],
-                  ),
+                          if (!_atBottom)
+                            Positioned(
+                              right: 14,
+                              bottom: 12,
+                              child: _LatestButton(
+                                unseen: _unseen,
+                                onTap: () => _jumpToLatest(animate: true),
+                              ),
+                            ),
+                        ],
+                      ),
           ),
           const Divider(height: 1, thickness: 0.5, color: Color(0xFFE5E5EA)),
           if (widget.isSubagent)
@@ -1690,6 +1739,55 @@ class _ChatPageState extends State<ChatPage> with RouteAware {
               ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// Static placeholder for the first ~360 ms of a conversation: the transcript
+/// area keeps the same shape as the loaded screen, so the push animation ends
+/// on a page that does not swap its content under the user's eyes.
+class _ChatSkeleton extends StatelessWidget {
+  const _ChatSkeleton();
+
+  @override
+  Widget build(BuildContext context) {
+    Widget bar({
+      required double widthFactor,
+      required double height,
+      bool mine = false,
+    }) {
+      return Align(
+        alignment: mine ? Alignment.centerRight : Alignment.centerLeft,
+        child: FractionallySizedBox(
+          widthFactor: widthFactor,
+          child: Container(
+            height: height,
+            margin: const EdgeInsets.symmetric(vertical: 3),
+            decoration: BoxDecoration(
+              color: mine ? const Color(0xFFD7E5FA) : const Color(0xFFE9E9EB),
+              borderRadius: BorderRadius.only(
+                topLeft: const Radius.circular(18),
+                topRight: const Radius.circular(18),
+                bottomLeft: Radius.circular(mine ? 18 : 5),
+                bottomRight: Radius.circular(mine ? 5 : 18),
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.end,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          bar(widthFactor: 0.62, height: 74),
+          bar(widthFactor: 0.78, height: 96),
+          bar(widthFactor: 0.5, height: 38, mine: true),
+        ],
       ),
     );
   }

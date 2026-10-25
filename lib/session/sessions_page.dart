@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import 'dsh_client.dart';
 import 'chat_page.dart';
+import 'chat_route.dart';
 import 'mux_client.dart';
 import 'session_activity.dart';
 import '../version.dart';
@@ -49,6 +50,10 @@ class _SessionsPageState extends State<SessionsPage> {
   RpcFailure? _error;
   bool _loading = false;
   bool _creating = false;
+
+  /// Guards the 60 ms press-feedback beat in [_open]: a double tap must not
+  /// stack two chat pages.
+  bool _opening = false;
 
   @override
   void initState() {
@@ -189,7 +194,7 @@ class _SessionsPageState extends State<SessionsPage> {
       if (sessionId.isEmpty) throw 'session/create 未返回 sessionId';
       await Navigator.push(
         context,
-        MaterialPageRoute(
+        ChatRoute(
           builder: (_) => ChatPage(
             sessionId: sessionId,
             title: '新会话',
@@ -198,6 +203,8 @@ class _SessionsPageState extends State<SessionsPage> {
           ),
         ),
       );
+      // Wait for the pop transition before reordering rows.
+      await Future<void>.delayed(ChatRoute.popSettle);
       if (mounted) _refresh();
     } on RpcError catch (e) {
       if (mounted) {
@@ -742,18 +749,35 @@ class _SessionsPageState extends State<SessionsPage> {
   }
 
   Future<void> _open(SessionSummary s) async {
-    await Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) => ChatPage(
-          sessionId: s.sessionId,
-          title: s.blank ? '新会话' : (s.title ?? '未命名'),
-          pcOrigin: widget.pcOrigin,
-          cookieHeader: widget.cookieHeader,
+    if (_opening) return;
+    _opening = true;
+    // Give the row's press highlight a visible beat before the page starts
+    // moving. Pushing on the touch-up frame made the list feel like it was
+    // cut away instead of handing over to the conversation.
+    await Future<void>.delayed(const Duration(milliseconds: 60));
+    if (!mounted) {
+      _opening = false;
+      return;
+    }
+    try {
+      await Navigator.push(
+        context,
+        ChatRoute(
+          builder: (_) => ChatPage(
+            sessionId: s.sessionId,
+            title: s.blank ? '新会话' : (s.title ?? '未命名'),
+            pcOrigin: widget.pcOrigin,
+            cookieHeader: widget.cookieHeader,
+          ),
         ),
-      ),
-    );
-    // The chat page can rename/fork/archive; pick those up on return.
+      );
+    } finally {
+      _opening = false;
+    }
+    // The chat page can rename/fork/archive; pick those up on return — but
+    // only after the list has finished sliding back in, otherwise the rows
+    // reorder while the page is still moving.
+    await Future<void>.delayed(ChatRoute.popSettle);
     if (mounted) _refresh();
   }
 }
@@ -1083,7 +1107,7 @@ class _SessionSearchPageState extends State<SessionSearchPage> {
     final summary = row.summary ?? _summaries[row.sessionId];
     Navigator.push(
       context,
-      MaterialPageRoute(
+      ChatRoute(
         builder: (_) => ChatPage(
           sessionId: row.sessionId,
           title: summary == null
