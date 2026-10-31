@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'dsh_client.dart';
 import 'chat_page.dart';
@@ -44,6 +45,13 @@ class _SessionsPageState extends State<SessionsPage> {
   /// PC model catalog, used to show each row's model name.
   ModelCatalogData? _catalog;
 
+  /// Agent presets the PC offers for a new session — the composer's "mode"
+  /// (Standard / Creator / custom…). Empty when the Host has no roster.
+  List<AgentPreset> _presets = const [];
+
+  /// Mode chosen last time, preselected in the new-session sheet.
+  String? _lastPreset;
+
   /// PC Workspace registry (titles, membership, archived set). Null when the
   /// snapshot failed — grouping then falls back to cwd tails.
   WorkspaceSnapshot? _workspaces;
@@ -61,6 +69,7 @@ class _SessionsPageState extends State<SessionsPage> {
     _rpc = DshRpc(pcOrigin: widget.pcOrigin, cookieHeader: widget.cookieHeader);
     // Live agent status (including subagent descendants) drives the row dots.
     SessionActivity.instance.addListener(_onActivity);
+    _restorePreset();
     _refresh();
   }
 
@@ -79,12 +88,16 @@ class _SessionsPageState extends State<SessionsPage> {
     try {
       final snapshotFuture = _loadWorkspaces();
       final catalogFuture = _rpc.modelCatalog().catchError((Object _) => null);
+      final presetsFuture =
+          _rpc.listAgentPresets().catchError((Object _) => const <AgentPreset>[]);
       final items = await _rpc.listSessions();
       final snapshot = await snapshotFuture;
       final catalog = await catalogFuture;
+      final presets = await presetsFuture;
       if (!mounted) return;
       setState(() {
         _catalog = catalog;
+        _presets = presets;
         _workspaces = snapshot;
         _pinned = (snapshot?.pinnedSessionIds ?? const <String>[]).toSet();
         // PC sidebar rule: subagent durable summaries and archived sessions
@@ -136,28 +149,40 @@ class _SessionsPageState extends State<SessionsPage> {
   /// Workspace lands in「未分组」, so pick one whenever the PC lists any.
   Future<void> _create() async {
     if (_creating) return;
-    // A tap during the first refresh would otherwise see an empty registry and
-    // create an ungrouped session; wait for the Workspace snapshot first.
-    var workspaces = _workspaces?.items ?? const <WorkspaceInfo>[];
-    if (_workspaces == null) {
-      setState(() => _creating = true);
-      final snapshot = await _loadWorkspaces();
-      if (!mounted) return;
-      if (snapshot != null) _workspaces = snapshot;
-      setState(() => _creating = false);
-      if (!mounted) return;
-      workspaces = snapshot?.items ?? const <WorkspaceInfo>[];
-    }
-    String? workspaceId;
-    if (workspaces.length == 1) {
-      workspaceId = workspaces.first.workspaceId;
-    } else if (workspaces.length > 1) {
-      workspaceId = await _pickWorkspace(workspaces);
-      if (!mounted) return;
-      if (workspaceId == null) return; // cancelled
-    }
+    // Held for the whole flow (workspace sheet, mode sheet, create, chat) so a
+    // double tap cannot stack two sheets or create two sessions.
     setState(() => _creating = true);
     try {
+      // A tap during the first refresh would otherwise see an empty registry
+      // and create an ungrouped session; wait for the snapshot first.
+      var workspaces = _workspaces?.items ?? const <WorkspaceInfo>[];
+      if (_workspaces == null) {
+        final snapshot = await _loadWorkspaces();
+        if (!mounted) return;
+        if (snapshot != null) _workspaces = snapshot;
+        workspaces = snapshot?.items ?? const <WorkspaceInfo>[];
+      }
+      String? workspaceId;
+      if (workspaces.length == 1) {
+        workspaceId = workspaces.first.workspaceId;
+      } else if (workspaces.length > 1) {
+        workspaceId = await _pickWorkspace(workspaces);
+        if (!mounted) return;
+        if (workspaceId == null) return; // cancelled
+      }
+      // Pick the mode (Agent preset) the Host composes the session with.
+      // Broken presets cannot start a session, so they are not offered; a Host
+      // without a roster (or with a single preset) keeps the old one-tap flow.
+      final presets = _presets.where((p) => p.broken == null).toList();
+      String? presetId;
+      if (presets.length > 1) {
+        presetId = await _pickPreset(presets);
+        if (!mounted) return;
+        if (presetId == null) return; // cancelled
+        _rememberPreset(presetId);
+      } else if (presets.length == 1) {
+        presetId = presets.first.id;
+      }
       // Reuse only a blank that belongs to the target Workspace (the Host's
       // reuse gate requires membership); otherwise create a fresh one there.
       final memberIds = workspaceId == null
@@ -174,6 +199,7 @@ class _SessionsPageState extends State<SessionsPage> {
       }
       final request = <String, dynamic>{
         'workspaceId': ?workspaceId,
+        'agentPreset': ?presetId,
         if (blankRow != null) 'sessionId': blankRow.sessionId,
       };
       Map? value;
@@ -186,6 +212,7 @@ class _SessionsPageState extends State<SessionsPage> {
         value = await _rpc.call('session/create', {
           'request': <String, dynamic>{
             'workspaceId': ?workspaceId,
+            'agentPreset': ?presetId,
           },
         }) as Map?;
       }
@@ -650,6 +677,171 @@ class _SessionsPageState extends State<SessionsPage> {
                   label: workspace.title,
                   onTap: () => Navigator.pop(ctx, workspace.workspaceId),
                 ),
+              const Divider(height: 0.5, thickness: 0.5, color: Color(0xFFE5E5EA)),
+              _SheetAction(
+                label: '取消',
+                bold: true,
+                onTap: () => Navigator.pop(ctx),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  static const String _presetKey = 'lanbuddy.newSessionPreset';
+
+  /// Reload the mode picked last time. Purely a convenience: the roster's own
+  /// default still wins when nothing is stored or the preset disappeared.
+  Future<void> _restorePreset() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final saved = prefs.getString(_presetKey);
+      if (saved != null && saved.isNotEmpty && mounted) {
+        setState(() => _lastPreset = saved);
+      }
+    } catch (_) {
+      // No stored choice.
+    }
+  }
+
+  void _rememberPreset(String presetId) {
+    _lastPreset = presetId;
+    unawaited(_storePreset(presetId));
+  }
+
+  Future<void> _storePreset(String presetId) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_presetKey, presetId);
+    } catch (_) {
+      // Remembering the choice is optional; creation already succeeded.
+    }
+  }
+
+  /// Sheet to choose the Agent preset ("mode") for the session being created.
+  /// Returns the preset id, or null when cancelled.
+  Future<String?> _pickPreset(List<AgentPreset> presets) {
+    final fallback =
+        presets.firstWhere((p) => p.isDefault, orElse: () => presets.first).id;
+    final current =
+        presets.any((p) => p.id == _lastPreset) ? _lastPreset : fallback;
+    return showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => SafeArea(
+        child: Container(
+          margin: const EdgeInsets.fromLTRB(12, 0, 12, 10),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(14),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Padding(
+                padding: EdgeInsets.fromLTRB(16, 14, 16, 4),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    '新建会话用哪个模式？',
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: Color(0xFF6D6D72),
+                    ),
+                  ),
+                ),
+              ),
+              Flexible(
+                child: SingleChildScrollView(
+                  child: Column(
+                    children: [
+                      for (final preset in presets)
+                        InkWell(
+                          onTap: () => Navigator.pop(ctx, preset.id),
+                          child: Padding(
+                            padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
+                            child: Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Row(
+                                        children: [
+                                          Flexible(
+                                            child: Text(
+                                              preset.label,
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                              style: const TextStyle(
+                                                fontSize: 16,
+                                                color: Color(0xFF1C1C1E),
+                                              ),
+                                            ),
+                                          ),
+                                          if (preset.isDefault) ...[
+                                            const SizedBox(width: 6),
+                                            Container(
+                                              padding:
+                                                  const EdgeInsets.symmetric(
+                                                      horizontal: 6,
+                                                      vertical: 1),
+                                              decoration: BoxDecoration(
+                                                color: const Color(0xFF007AFF)
+                                                    .withValues(alpha: 0.12),
+                                                borderRadius:
+                                                    BorderRadius.circular(5),
+                                              ),
+                                              child: const Text(
+                                                '默认',
+                                                style: TextStyle(
+                                                  fontSize: 10,
+                                                  fontWeight: FontWeight.w600,
+                                                  color: Color(0xFF007AFF),
+                                                ),
+                                              ),
+                                            ),
+                                          ],
+                                        ],
+                                      ),
+                                      if (preset.descriptionText.isNotEmpty)
+                                        Padding(
+                                          padding: const EdgeInsets.only(top: 2),
+                                          child: Text(
+                                            preset.descriptionText,
+                                            maxLines: 2,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: const TextStyle(
+                                              fontSize: 12,
+                                              color: Color(0xFF8E8E93),
+                                            ),
+                                          ),
+                                        ),
+                                    ],
+                                  ),
+                                ),
+                                if (preset.id == current)
+                                  const Padding(
+                                    padding: EdgeInsets.only(left: 10, top: 2),
+                                    child: Icon(
+                                      Icons.check,
+                                      size: 18,
+                                      color: Color(0xFF007AFF),
+                                    ),
+                                  ),
+                              ],
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
               const Divider(height: 0.5, thickness: 0.5, color: Color(0xFFE5E5EA)),
               _SheetAction(
                 label: '取消',

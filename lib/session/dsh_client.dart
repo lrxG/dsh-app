@@ -73,6 +73,15 @@ class DshRpc {
     return SearchResult(items: items, hasMore: m['hasMore'] == true);
   }
 
+  /// Agent presets ("modes") the Host offers for new sessions
+  /// (`agentPresets/list`, no args).
+  Future<List<AgentPreset>> listAgentPresets() async {
+    final value = await call('agentPresets/list', <String, dynamic>{});
+    if (value is! Map) return const [];
+    final items = value['presets'] as List? ?? const [];
+    return items.map(AgentPreset.fromWire).whereType<AgentPreset>().toList();
+  }
+
   /// PC-side model catalog (`session/modelCatalog`, no args).
   ///
   /// value = {default, routableProviders, groups, failures} — the same data
@@ -359,6 +368,66 @@ class SearchResult {
 
   final List<SearchItem> items;
   final bool hasMore;
+}
+
+/// One selectable Agent preset — what the PC composer calls the session's
+/// "mode" (`agentPresets/list`).
+class AgentPreset {
+  const AgentPreset({
+    required this.id,
+    required this.isDefault,
+    this.name,
+    this.description,
+    this.broken,
+  });
+
+  final String id;
+
+  /// A session naming no preset composes this one.
+  final bool isDefault;
+  final String? name;
+  final String? description;
+
+  /// Why this preset cannot compose a session; null when it can.
+  final String? broken;
+
+  /// Shipped presets publish no `name` — the PC localizes them by id. Mirror
+  /// the PC's Chinese copy so the picker never shows a raw id like `standard`.
+  static const Map<String, String> _builtInNames = {
+    'standard': '标准模式',
+    'ptc': 'PTC 模式',
+    'minimal': '极简模式',
+    'cordis': '创造模式',
+  };
+
+  static const Map<String, String> _builtInDescriptions = {
+    'standard': '处理代码、文件和资料，适合大多数任务。Agent 会按需使用检索、编辑和终端等工具。',
+    'ptc': '包含标准模式的所有能力，更适合批量调用工具，并对结果进行筛选、整理、去重、统计或汇总的任务。',
+    'minimal': 'Agent 使用终端和图片读取工具，并支持上下文压缩，适合测试和对比其基础表现。',
+    'cordis': '用对话定制 DSH：让 Agent 编写插件，添加新功能或界面；也能组合工具和提示词，创建自己的模式。',
+  };
+
+  String get label => (name != null && name!.isNotEmpty)
+      ? name!
+      : (_builtInNames[id] ?? id);
+
+  String get descriptionText => (description != null && description!.isNotEmpty)
+      ? description!
+      : (_builtInDescriptions[id] ?? '');
+
+  static AgentPreset? fromWire(Object? raw) {
+    if (raw is! Map) return null;
+    final id = raw['id'];
+    if (id is! String || id.isEmpty) return null;
+    return AgentPreset(
+      id: id,
+      isDefault: raw['isDefault'] == true,
+      name: raw['name'] is String ? raw['name'] as String : null,
+      description:
+          raw['description'] is String ? raw['description'] as String : null,
+      broken: raw['broken'] is String ? raw['broken'] as String : null,
+    );
+  }
 }
 
 /// One provider group of the PC model catalog (`session/modelCatalog`).

@@ -114,6 +114,12 @@ class _PairGateState extends State<PairGate> with WidgetsBindingObserver {
   bool _probing = false;
   RpcFailure? _probeFailure;
 
+  /// Monotonic id of the newest probe. Switching PCs while an old probe is
+  /// still in flight used to drop the new probe (single-flight guard) and then
+  /// apply the old PC's failure to the new one, showing "连不上这台 PC" for a
+  /// PC that answered fine. Each probe now only applies its own result.
+  int _probeToken = 0;
+
   @override
   void initState() {
     super.initState();
@@ -152,19 +158,19 @@ class _PairGateState extends State<PairGate> with WidgetsBindingObserver {
   Future<void> _probe() async {
     final result = _result;
     if (result == null || (result.cookieHeader ?? '').isEmpty) return;
-    if (_probing) return;
-    setState(() => _probing = true);
+    final token = ++_probeToken;
+    if (!_probing) setState(() => _probing = true);
     try {
       await DshRpc(pcOrigin: result.pcOrigin, cookieHeader: result.cookieHeader!)
           .listSessions();
-      if (!mounted) return;
+      if (!mounted || token != _probeToken) return;
       setState(() {
         _reachable = true;
         _probeFailure = null;
         _probing = false;
       });
     } catch (error) {
-      if (!mounted) return;
+      if (!mounted || token != _probeToken) return;
       setState(() {
         _reachable = false;
         _probeFailure = describeFailure(error);
@@ -441,7 +447,14 @@ class _PairGateState extends State<PairGate> with WidgetsBindingObserver {
       _phase = result.ok ? LinkPhase.paired : LinkPhase.failed;
     });
     if (result.ok) {
+      // A fresh pairing is a different PC: clear the previous verdict and
+      // probe this one, otherwise the banner keeps the old PC's failure.
+      setState(() {
+        _reachable = null;
+        _probeFailure = null;
+      });
       _watchApprovals(result);
+      unawaited(_probe());
       WidgetsBinding.instance.addPostFrameCallback((_) => _maybeShowNotificationHint());
     }
   }
