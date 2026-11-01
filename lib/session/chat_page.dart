@@ -72,6 +72,21 @@ class _ChatPageState extends State<ChatPage> with RouteAware {
   /// Agent visibly between assistant-stream start…end.
   bool _busy = false;
 
+  /// dsh's Inbox: prompts the PC accepted but has not started. While the Agent
+  /// runs, a send never reaches the transcript until it is claimed, so without
+  /// these rows the message looked like it vanished (the PC still showed it as
+  /// queued/steerable). Keyed by Inbox target; [_queued] flattens for render.
+  final Map<String, List<QueuedMessage>> _inbox = {
+    'next-step': <QueuedMessage>[],
+    'next-turn': <QueuedMessage>[],
+  };
+
+  /// Pending rows in delivery order (mid-turn input first).
+  List<QueuedMessage> get _queued => [
+        ..._inbox['next-step']!,
+        ..._inbox['next-turn']!,
+      ];
+
   /// Local title (rename updates it without rebuilding the parent list).
   late String _title = widget.title;
 
@@ -241,6 +256,9 @@ class _ChatPageState extends State<ChatPage> with RouteAware {
         _messages.clear();
         _live = null;
         _busy = false;
+        for (final rows in _inbox.values) {
+          rows.clear();
+        }
       }
       _reconnectable = false;
       _state = '连接中…';
@@ -547,11 +565,17 @@ class _ChatPageState extends State<ChatPage> with RouteAware {
 
   void _onSnapshot(Map value) {
     final bubbles = decodeSnapshot(value);
+    final inbox = decodeSnapshotInbox(value);
     _autoFailures = 0;
     setState(() {
       _messages
         ..clear()
         ..addAll(bubbles);
+      for (final target in _inbox.keys) {
+        _inbox[target]!
+          ..clear()
+          ..addAll(inbox[target] ?? const <QueuedMessage>[]);
+      }
       // The snapshot is the whole transcript, so any live buffer left over
       // from the previous socket would draw a second, stale copy of the same
       // answer on top of the durable one it now contains.
@@ -567,6 +591,16 @@ class _ChatPageState extends State<ChatPage> with RouteAware {
   }
 
   void _onDurableEvent(Map event) {
+    // Inbox splices are process events, not bubbles: mirror them into the
+    // pending rows so a queued message appears (and leaves) with the PC's copy.
+    if (event['type'] == 'agent/inbox/spliced') {
+      final data = event['data'];
+      if (data is! Map) return;
+      final rows = _inbox['${data['target']}'];
+      if (rows == null) return;
+      setState(() => applyInboxSplice(rows, data));
+      return;
+    }
     final msg = decodeEvent(event);
     if (msg == null) return;
     final wasBusy = _busy;
@@ -1182,7 +1216,8 @@ class _ChatPageState extends State<ChatPage> with RouteAware {
   Widget build(BuildContext context) {
     final live = _live;
     final liveBubble = live != null && live.hasContent;
-    final count = _messages.length + (liveBubble ? 1 : 0);
+    final queued = _queued;
+    final count = _messages.length + queued.length + (liveBubble ? 1 : 0);
 
     return Scaffold(
       backgroundColor: const Color(0xFFF2F2F7),
@@ -1447,13 +1482,22 @@ class _ChatPageState extends State<ChatPage> with RouteAware {
                               padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
                               itemCount: count,
                               itemBuilder: (context, i) {
-                                if (liveBubble && i == 0) {
+                                // Pending Inbox rows are the newest thing on
+                                // screen: they sit below the transcript (and
+                                // below the streaming answer), newest first in
+                                // this reversed list.
+                                if (i < queued.length) {
+                                  return _queuedBubble(
+                                      queued[queued.length - 1 - i]);
+                                }
+                                final rest = i - queued.length;
+                                if (liveBubble && rest == 0) {
                                   return _bubble(_liveMessage(live),
                                       streaming: true);
                                 }
                                 final index = _messages.length -
                                     1 -
-                                    (i - (liveBubble ? 1 : 0));
+                                    (rest - (liveBubble ? 1 : 0));
                                 return _bubble(_messages[index]);
                               },
                             ),
@@ -1599,22 +1643,39 @@ class _ChatPageState extends State<ChatPage> with RouteAware {
                     ),
                   ),
                   const SizedBox(width: 8),
-                  if (_busy) ...[
-                    GestureDetector(
-                      onTap: _cancelTurn,
-                      child: Container(
-                        width: 36,
-                        height: 36,
-                        decoration: const BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: Color(0x1AE5453C),
-                        ),
-                        child: const Icon(Icons.stop_rounded,
-                            size: 21, color: Color(0xFFE5453C)),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                  ],
+                  // Stop is available whenever the agent is working, not only
+                  // while an assistant answer is streaming: `_busy` drops to
+                  // false at every step boundary (tool runs, subagent waits),
+                  // which used to hide the button mid-task. The activity map is
+                  // the same source the status strip trusts, and it also knows
+                  // about a turn this page attached to mid-flight.
+                  AnimatedBuilder(
+                    animation: SessionActivity.instance,
+                    builder: (context, _) {
+                      final running = _busy ||
+                          SessionActivity.instance.isRunning(_sessionId);
+                      if (!running) return const SizedBox.shrink();
+                      return Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          GestureDetector(
+                            onTap: _cancelTurn,
+                            child: Container(
+                              width: 36,
+                              height: 36,
+                              decoration: const BoxDecoration(
+                                shape: BoxShape.circle,
+                                color: Color(0x1AE5453C),
+                              ),
+                              child: const Icon(Icons.stop_rounded,
+                                  size: 21, color: Color(0xFFE5453C)),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                        ],
+                      );
+                    },
+                  ),
                   GestureDetector(
                     onTap: _sending ? null : _send,
                     child: Container(
@@ -1662,6 +1723,173 @@ class _ChatPageState extends State<ChatPage> with RouteAware {
               ? '${reasoning.substring(0, 4000)}…'
               : reasoning),
     );
+  }
+
+  /// One pending Inbox row: a prompt the PC holds but has not started. Tapping
+  /// it offers the PC queue dock's 编辑 / 撤回 so the phone never becomes a
+  /// write-only queue.
+  Widget _queuedBubble(QueuedMessage m) {
+    return Align(
+      key: ValueKey('q-${m.itemId}'),
+      alignment: Alignment.centerRight,
+      child: GestureDetector(
+        onTap: widget.isSubagent ? null : () => _queuedMenu(m),
+        child: Container(
+          margin: const EdgeInsets.symmetric(vertical: 3),
+          padding: const EdgeInsets.fromLTRB(13, 7, 13, 9),
+          constraints:
+              BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.82),
+          decoration: BoxDecoration(
+            color: const Color(0xFF4C9AFF),
+            borderRadius: const BorderRadius.only(
+              topLeft: Radius.circular(18),
+              topRight: Radius.circular(18),
+              bottomLeft: Radius.circular(18),
+              bottomRight: Radius.circular(5),
+            ),
+            border: Border.all(color: const Color(0x33007AFF)),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    m.steering
+                        ? Icons.subdirectory_arrow_right
+                        : Icons.schedule,
+                    size: 12,
+                    color: Colors.white70,
+                  ),
+                  const SizedBox(width: 4),
+                  Text(
+                    m.steering ? '插话 · 下一步送达' : '排队中',
+                    style: const TextStyle(fontSize: 11, color: Colors.white70),
+                  ),
+                  if (!widget.isSubagent) ...[
+                    const SizedBox(width: 4),
+                    const Text(
+                      '· 点按可撤回或编辑',
+                      style: TextStyle(fontSize: 11, color: Colors.white70),
+                    ),
+                  ],
+                ],
+              ),
+              if (m.text.trim().isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(top: 3),
+                  child: Text(
+                    m.text,
+                    style: const TextStyle(
+                        color: Colors.white, fontSize: 15.5, height: 1.4),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Edit/withdraw one pending row (the PC queue dock's long-press actions).
+  Future<void> _queuedMenu(QueuedMessage row) async {
+    final action = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => SafeArea(
+        child: Container(
+          margin: const EdgeInsets.fromLTRB(12, 0, 12, 10),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(14),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _SheetAction(
+                label: '编辑这条排队消息',
+                onTap: () => Navigator.pop(ctx, 'edit'),
+              ),
+              _SheetAction(
+                label: '撤回这条排队消息',
+                destructive: true,
+                onTap: () => Navigator.pop(ctx, 'remove'),
+              ),
+              const Divider(height: 0.5, thickness: 0.5, color: Color(0xFFE5E5EA)),
+              _SheetAction(
+                label: '取消',
+                bold: true,
+                onTap: () => Navigator.pop(ctx),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (action == 'edit') {
+      await _editQueued(row);
+    } else if (action == 'remove') {
+      await _removeQueued(row);
+    }
+  }
+
+  Future<void> _editQueued(QueuedMessage row) async {
+    final controller = TextEditingController(text: row.text);
+    final text = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('编辑排队消息'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            TextField(
+              controller: controller,
+              autofocus: true,
+              minLines: 1,
+              maxLines: 6,
+              decoration: const InputDecoration(hintText: '消息内容'),
+            ),
+            const SizedBox(height: 10),
+            const Text(
+              '排队消息只接受文字，原有的图片/附件会被去掉。',
+              style: TextStyle(fontSize: 12, color: Color(0xFF8E8E93)),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, controller.text.trim()),
+            child: const Text('保存'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    if (text == null || text.isEmpty) return;
+    try {
+      await _rpc.editQueued(_sessionId, row.itemId, text);
+      // The Host's splice carries the replacement text back to the rows.
+    } on RpcError catch (e) {
+      if (mounted) _snack('编辑失败：${e.code} ${e.message}');
+    } catch (e) {
+      if (mounted) _snack('网络错误：$e');
+    }
+  }
+
+  Future<void> _removeQueued(QueuedMessage row) async {
+    try {
+      await _rpc.removeQueued(_sessionId, row.itemId);
+    } on RpcError catch (e) {
+      if (mounted) _snack('撤回失败：${e.code} ${e.message}');
+    } catch (e) {
+      if (mounted) _snack('网络错误：$e');
+    }
   }
 
   Widget _bubble(ChatMessage m, {bool streaming = false}) {
@@ -2081,11 +2309,13 @@ class _SheetAction extends StatelessWidget {
     required this.label,
     required this.onTap,
     this.bold = false,
+    this.destructive = false,
   });
 
   final String label;
   final VoidCallback onTap;
   final bool bold;
+  final bool destructive;
 
   @override
   Widget build(BuildContext context) {
@@ -2099,7 +2329,7 @@ class _SheetAction extends StatelessWidget {
             style: TextStyle(
               fontSize: 16,
               fontWeight: bold ? FontWeight.w600 : FontWeight.w400,
-              color: const Color(0xFF007AFF),
+              color: destructive ? const Color(0xFFE5453C) : const Color(0xFF007AFF),
             ),
           ),
         ),

@@ -139,6 +139,88 @@ List<ChatMessage> decodeSnapshot(dynamic value) {
   return out;
 }
 
+/// One prompt the PC accepted but has not started yet — the rows the PC shows
+/// as 「排队」 (a queued turn) or 「插话」 (input for the running turn's next
+/// step). They live in dsh's durable Inbox, not in the transcript, so a send
+/// during a running task produces no `user/message` event until it is claimed.
+class QueuedMessage {
+  QueuedMessage({
+    required this.itemId,
+    required this.text,
+    required this.steering,
+  });
+
+  /// Agent-owned Inbox identity (the `itemId` of `session/updateQueue`).
+  final String itemId;
+  String text;
+
+  /// True for `next-step` rows: delivered at the running turn's next step
+  /// boundary instead of starting a new turn.
+  final bool steering;
+}
+
+/// Inbox targets in delivery order: mid-turn input reaches the model before a
+/// whole queued turn does.
+const List<String> inboxTargets = ['next-step', 'next-turn'];
+
+/// Read the pending Inbox out of a follow `snapshot` frame
+/// (`projections.values.inbox`, values keyed by target).
+Map<String, List<QueuedMessage>> decodeSnapshotInbox(dynamic snapshot) {
+  if (snapshot is! Map) return decodeInbox(null);
+  final projections = snapshot['projections'];
+  if (projections is! Map) return decodeInbox(null);
+  final values = projections['values'];
+  if (values is! Map) return decodeInbox(null);
+  return decodeInbox(values['inbox']);
+}
+
+/// Decode one `inbox` projection value into rows keyed by target.
+Map<String, List<QueuedMessage>> decodeInbox(Object? value) {
+  final out = <String, List<QueuedMessage>>{for (final target in inboxTargets) target: <QueuedMessage>[]};
+  if (value is! Map) return out;
+  for (final target in inboxTargets) {
+    final rows = value[target];
+    if (rows is! List) continue;
+    for (final row in rows) {
+      final message = queuedOf(row, steering: target == 'next-step');
+      if (message != null) out[target]!.add(message);
+    }
+  }
+  return out;
+}
+
+/// Decode one durable `user/message`-shaped `UserMessage` into an Inbox row.
+QueuedMessage? queuedOf(Object? raw, {required bool steering}) {
+  if (raw is! Map) return null;
+  final id = raw['id'];
+  if (id is! String || id.isEmpty) return null;
+  // Inbox rows are prompts; Host-authored injections are never queued.
+  final source = raw['source'];
+  if (source is! Map || source['kind'] != 'user') return null;
+  return QueuedMessage(itemId: id, text: _textOf(raw['content']), steering: steering);
+}
+
+/// Apply one `agent/inbox/spliced` event data map to that target's rows.
+/// The Host sends the same splice it folded into the projection, so mirroring
+/// it keeps the phone's queue identical without extra reads.
+void applyInboxSplice(List<QueuedMessage> rows, Map data) {
+  final start = (data['start'] as num?)?.toInt();
+  if (start == null) return;
+  final removed = (data['removedCount'] as num?)?.toInt() ?? 0;
+  final steering = data['target'] == 'next-step';
+  final insertedRaw = data['inserted'];
+  final inserted = <QueuedMessage>[];
+  if (insertedRaw is List) {
+    for (final row in insertedRaw) {
+      final message = queuedOf(row, steering: steering);
+      if (message != null) inserted.add(message);
+    }
+  }
+  final at = start.clamp(0, rows.length);
+  final end = (at + removed).clamp(at, rows.length);
+  rows.replaceRange(at, end, inserted);
+}
+
 /// Streaming buffer for the live assistant attempt (`assistant-stream` frames).
 class LiveAssistant {
   final text = StringBuffer();

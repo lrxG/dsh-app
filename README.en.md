@@ -46,6 +46,7 @@ Done. Sessions, models and messages sync from the PC; you can keep chatting from
 | **Subagents** | A parent that delegated work is no longer shown as "idle": the row dot and "subagent ×N" count the whole agent tree; tap to read the child sessions (read-only) |
 | **Interaction** | Approval prompts (allow once / reject) · background completion notifications (tap to open that conversation) |
 | **Devices** | Remember multiple PCs and switch with one tap |
+| **Updates** | Tap the version footer: checks the latest GitHub release · downloads and verifies the APK (SHA-256) · hands it to the system installer · one silent check per day |
 
 ## Background notifications
 

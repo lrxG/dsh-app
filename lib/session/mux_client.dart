@@ -63,6 +63,11 @@ class MuxClient {
       headers: {'cookie': cookieHeader},
       pingInterval: const Duration(seconds: 15),
     );
+    // `ready` reports the same connect failure the stream does; leaving that
+    // future unobserved makes every failed dial print an "Unhandled Exception"
+    // in logcat (a stale port at launch, a PC still booting). The stream error
+    // below is what actually drives the retry.
+    unawaited(_channel!.ready.catchError((Object _) {}));
     _channel!.stream.listen(_onFrame, onError: _propagateAll, onDone: _propagateAll);
   }
 

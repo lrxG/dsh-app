@@ -12,6 +12,7 @@ import android.provider.OpenableColumns
 import android.provider.Settings
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
+import androidx.core.content.FileProvider
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -101,6 +102,86 @@ class MainActivity : FlutterActivity() {
                     else -> result.notImplemented()
                 }
             }
+
+        // Self-update: hand a downloaded APK to the system installer, and open
+        // the release page when downloading is not an option.
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "lanbuddy/update")
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "install" -> {
+                        val path = call.argument<String>("path")
+                        if (path.isNullOrEmpty()) {
+                            result.error("bad-path", "missing apk path", null)
+                            return@setMethodCallHandler
+                        }
+                        result.success(installApk(path))
+                    }
+                    "openUrl" -> {
+                        val url = call.argument<String>("url")
+                        if (url.isNullOrEmpty()) {
+                            result.error("bad-url", "missing url", null)
+                            return@setMethodCallHandler
+                        }
+                        result.success(openUrl(url))
+                    }
+                    else -> result.notImplemented()
+                }
+            }
+    }
+
+    /**
+     * Start the system installer for one downloaded APK.
+     *
+     * Android 8+ gates sideloading behind a per-app "install unknown apps"
+     * grant, so the first call opens that settings page instead; the caller
+     * keeps the file and retries once the grant is in place. The APK is shared
+     * through our FileProvider — a `file://` URI would be rejected on API 24+.
+     */
+    private fun installApk(path: String): Map<String, Any?> {
+        val file = File(path)
+        if (!file.exists()) {
+            return mapOf("status" to "failed", "message" to "安装包已不存在，请重新下载")
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+            !packageManager.canRequestPackageInstalls()
+        ) {
+            return try {
+                startActivity(
+                    Intent(
+                        Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                        Uri.parse("package:$packageName"),
+                    ),
+                )
+                mapOf("status" to "permission")
+            } catch (error: Exception) {
+                mapOf("status" to "failed", "message" to "无法打开安装权限设置：${error.message}")
+            }
+        }
+        return try {
+            val uri = FileProvider.getUriForFile(
+                this,
+                "$packageName.fileprovider",
+                file,
+            )
+            val intent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, "application/vnd.android.package-archive")
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            startActivity(intent)
+            mapOf("status" to "installer")
+        } catch (error: Exception) {
+            mapOf("status" to "failed", "message" to "无法调起安装器：${error.message}")
+        }
+    }
+
+    private fun openUrl(url: String): Boolean {
+        return try {
+            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+            true
+        } catch (error: Exception) {
+            false
+        }
     }
 
     override fun onNewIntent(intent: Intent) {

@@ -8,6 +8,8 @@ import 'chat_page.dart';
 import 'chat_route.dart';
 import 'mux_client.dart';
 import 'session_activity.dart';
+import '../update.dart';
+import '../update_sheet.dart';
 import '../version.dart';
 
 /// Session list mirroring the PC sidebar: subagent/child durable summaries
@@ -69,6 +71,10 @@ class _SessionsPageState extends State<SessionsPage> {
     _rpc = DshRpc(pcOrigin: widget.pcOrigin, cookieHeader: widget.cookieHeader);
     // Live agent status (including subagent descendants) drives the row dots.
     SessionActivity.instance.addListener(_onActivity);
+    // The version footer doubles as the update entry; a silent daily check makes
+    // it say when a newer release exists.
+    UpdateService.instance.addListener(_onUpdate);
+    unawaited(UpdateService.instance.checkIfDue());
     _restorePreset();
     _refresh();
   }
@@ -76,10 +82,15 @@ class _SessionsPageState extends State<SessionsPage> {
   @override
   void dispose() {
     SessionActivity.instance.removeListener(_onActivity);
+    UpdateService.instance.removeListener(_onUpdate);
     super.dispose();
   }
 
   void _onActivity() {
+    if (mounted) setState(() {});
+  }
+
+  void _onUpdate() {
     if (mounted) setState(() {});
   }
 
@@ -274,6 +285,16 @@ class _SessionsPageState extends State<SessionsPage> {
     return '${t.year}-${t.month}-${'${t.day}'.padLeft(2, '0')}';
   }
 
+  /// Footer text: the running version, plus what tapping it offers. A silent
+  /// daily check switches it to the newer release instead of a generic hint.
+  String get _footerLabel {
+    final service = UpdateService.instance;
+    if (service.hasUpdate) {
+      return 'DeepSeek Harness $appVersion · 有新版本 ${service.latest!.version}';
+    }
+    return 'DeepSeek Harness $appVersion · 检查更新';
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -330,13 +351,23 @@ class _SessionsPageState extends State<SessionsPage> {
           SafeArea(
             top: false,
             child: Padding(
-              padding: const EdgeInsets.only(top: 4, bottom: 10),
-              child: Text(
-                'DeepSeek Harness $appVersion',
-                style: const TextStyle(
-                  fontSize: 11,
-                  letterSpacing: 0.3,
-                  color: Color(0xFFC7C7CC),
+              padding: const EdgeInsets.only(top: 2, bottom: 6),
+              child: InkWell(
+                onTap: () => showUpdateSheet(context),
+                borderRadius: BorderRadius.circular(8),
+                child: Padding(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  child: Text(
+                    _footerLabel,
+                    style: TextStyle(
+                      fontSize: 11,
+                      letterSpacing: 0.3,
+                      color: UpdateService.instance.hasUpdate
+                          ? const Color(0xFF007AFF)
+                          : const Color(0xFFC7C7CC),
+                    ),
+                  ),
                 ),
               ),
             ),

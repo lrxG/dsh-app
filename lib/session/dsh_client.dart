@@ -186,6 +186,35 @@ class DshRpc {
     });
   }
 
+  /// Withdraw one still-pending Inbox row (`session/updateQueue`, action
+  /// `remove`) — the PC's 「撤回」 on a queued message.
+  Future<void> removeQueued(String sessionId, String itemId) async {
+    await call('session/updateQueue', {
+      'request': {
+        'sessionId': sessionId,
+        'itemId': itemId,
+        'action': {'kind': 'remove'},
+      },
+    });
+  }
+
+  /// Replace one pending Inbox row's text (`session/updateQueue`, action
+  /// `edit`). The Host accepts text content only, so attachments are dropped.
+  Future<void> editQueued(String sessionId, String itemId, String text) async {
+    await call('session/updateQueue', {
+      'request': {
+        'sessionId': sessionId,
+        'itemId': itemId,
+        'action': {
+          'kind': 'edit',
+          'content': [
+            {'type': 'text', 'text': text},
+          ],
+        },
+      },
+    });
+  }
+
   /// Answer one forwarded `approval/request` (`$events/result`).
   ///
   /// The outcome value is the dsh approval decision: `allowed-once` or

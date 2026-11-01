@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Only the self-update download is shared with the installer: one directory
+     in the app cache, nothing else. -->
+<paths>
+    <cache-path name="updates" path="updates/" />
+</paths>
