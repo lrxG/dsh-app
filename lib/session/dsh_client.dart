@@ -234,6 +234,25 @@ class DshRpc {
     });
   }
 
+  /// Answer one forwarded `user-questions/request` (`$events/result`).
+  ///
+  /// Same envelope as an approval; the value is the `{answers: [...]}` batch
+  /// that the Host's question waterfall claims with.
+  Future<void> answerQuestion({
+    required String clientId,
+    required String eventId,
+    required List<Map<String, dynamic>> answers,
+  }) async {
+    await call(r'$events/result', {
+      'clientId': clientId,
+      'eventId': eventId,
+      'outcome': {
+        'kind': 'result',
+        'value': {'answers': answers},
+      },
+    });
+  }
+
   /// Fresh-enough correlation id without pulling in crypto packages.
   static String _rpcId() {
     final r = Random();

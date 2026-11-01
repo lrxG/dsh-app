@@ -44,7 +44,7 @@ Done. Sessions, models and messages sync from the PC; you can keep chatting from
 | **Chat** | Streaming replies · reasoning fold · tool-call chips · stop turn · image & file attachments |
 | **Models** | Reads the PC catalog · two-level picker (model → effort) · each row shows the model it uses · writes back to the PC |
 | **Subagents** | A parent that delegated work is no longer shown as "idle": the row dot and "subagent ×N" count the whole agent tree; tap to read the child sessions (read-only) |
-| **Interaction** | Approval prompts (allow once / reject) · background completion notifications (tap to open that conversation) |
+| **Interaction** | Approval prompts (allow once / reject) · questions with options, multi-select, free-text answers or an explicit skip · background completion notifications (tap to open that conversation) |
 | **Devices** | Remember multiple PCs and switch with one tap |
 | **Updates** | Tap the version footer: checks the latest GitHub release · downloads and verifies the APK (SHA-256) · hands it to the system installer · one silent check per day |
 

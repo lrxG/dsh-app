@@ -3,31 +3,54 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 
 import 'dsh_client.dart';
+import 'interactions.dart';
 import 'mux_client.dart';
 import 'notify.dart';
 
-/// One pending `approval/request` delivered over the forwarded-event stream.
-class PendingApproval {
-  const PendingApproval({
-    required this.eventId,
-    required this.sessionId,
-    required this.toolName,
-    this.reason,
-  });
+/// One decision the PC is blocked on: an approval prompt or a question.
+sealed class PendingInteraction {
+  const PendingInteraction({required this.eventId, required this.sessionId});
 
+  /// Correlates the answer with the Host's pending waterfall.
   final String eventId;
 
   /// Agent id — for dsh an agent IS its session, so this matches `session/list`.
   final String sessionId;
+}
+
+/// One pending `approval/request` delivered over the forwarded-event stream.
+class PendingApproval extends PendingInteraction {
+  const PendingApproval({
+    required super.eventId,
+    required super.sessionId,
+    required this.toolName,
+    this.reason,
+  });
+
   final String toolName;
   final String? reason;
 }
 
-/// Subscribes to the Gateway forwarded-event stream and answers approvals.
+/// One pending `user-questions/request`: the turn waits until somebody answers.
 ///
-/// The stream is the only path that can claim an approval: dsh delivers
-/// `approval/request` as a waterfall and expects the answer back through
-/// `$events/result` (see `packages/api/gateway/src/client/remote-events.ts`).
+/// The desktop client shows the same request, and whichever client answers
+/// first claims it; the Host then cancels it for the rest.
+class PendingQuestion extends PendingInteraction {
+  const PendingQuestion({
+    required super.eventId,
+    required super.sessionId,
+    required this.questions,
+  });
+
+  final List<AskQuestion> questions;
+}
+
+/// Subscribes to the Gateway forwarded-event stream and answers approvals and
+/// questions.
+///
+/// The stream is the only path that can claim either: dsh delivers them as
+/// waterfalls and expects the answer back through `$events/result` (see
+/// `packages/api/gateway/src/client/remote-events.ts`).
 class ApprovalCenter extends ChangeNotifier {
   ApprovalCenter._();
 
@@ -41,9 +64,9 @@ class ApprovalCenter extends ChangeNotifier {
   String? _origin;
   String? _cookie;
   bool _stopped = true;
-  final List<PendingApproval> _pending = [];
+  final List<PendingInteraction> _pending = [];
 
-  List<PendingApproval> get pending => List.unmodifiable(_pending);
+  List<PendingInteraction> get pending => List.unmodifiable(_pending);
 
   bool get isRunning => !_stopped && _mux != null;
 
@@ -96,24 +119,46 @@ class ApprovalCenter extends ChangeNotifier {
         return;
       case RemoteEventsReady(:final clientId):
         _clientId = clientId;
-      case RemoteEventWaterfall(:final eventId, :final event, :final agentId, :final request):
-        if (event != 'approval/request') return;
+      case RemoteEventWaterfall(
+          :final eventId,
+          :final event,
+          :final agentId,
+          :final request,
+        ):
         if (_pending.any((p) => p.eventId == eventId)) return;
-        _pending.add(PendingApproval(
-          eventId: eventId,
-          sessionId: agentId,
-          toolName: '${request['toolName'] ?? '工具调用'}',
-          reason: _reasonOf(request),
-        ));
-        notifyListeners();
-        // Surface the request outside the app too.
-        final reason = _reasonOf(request);
-        Notifier.instance.show(
-          title: 'DSH 请求权限',
-          body: reason == null
-              ? '${request['toolName'] ?? '工具调用'} 等待你的决定'
-              : '${request['toolName'] ?? '工具调用'} · $reason',
-        );
+        switch (event) {
+          case 'approval/request':
+            final reason = _reasonOf(request);
+            _pending.add(PendingApproval(
+              eventId: eventId,
+              sessionId: agentId,
+              toolName: '${request['toolName'] ?? '工具调用'}',
+              reason: reason,
+            ));
+            notifyListeners();
+            // Surface the request outside the app too.
+            Notifier.instance.show(
+              title: 'DSH 请求权限',
+              body: reason == null
+                  ? '${request['toolName'] ?? '工具调用'} 等待你的决定'
+                  : '${request['toolName'] ?? '工具调用'} · $reason',
+            );
+          case 'user-questions/request':
+            final questions = parseAskQuestions(request['questions']);
+            if (questions == null) return;
+            _pending.add(PendingQuestion(
+              eventId: eventId,
+              sessionId: agentId,
+              questions: questions,
+            ));
+            notifyListeners();
+            Notifier.instance.show(
+              title: 'DSH 提问',
+              body: questions.length == 1
+                  ? questions.first.question
+                  : '${questions.first.question}（共 ${questions.length} 个问题）',
+            );
+        }
       case RemoteEventCancelled(:final eventId):
         _pending.removeWhere((p) => p.eventId == eventId);
         notifyListeners();
@@ -150,6 +195,28 @@ class ApprovalCenter extends ChangeNotifier {
       _pending.removeWhere((p) => p.eventId == approval.eventId);
       notifyListeners();
     }
+  }
+
+  /// Answer one pending question with its full batch.
+  ///
+  /// The pending entry is only dropped once the Host accepted the answer: a
+  /// failed send has to stay on screen so it can be retried.
+  Future<void> answerQuestion(
+    PendingQuestion question,
+    List<Map<String, dynamic>> answers,
+  ) async {
+    final clientId = _clientId;
+    final rpc = _rpc;
+    if (clientId == null || rpc == null) {
+      throw StateError('与 PC 的连接还没准备好，请稍后重试');
+    }
+    await rpc.answerQuestion(
+      clientId: clientId,
+      eventId: question.eventId,
+      answers: answers,
+    );
+    _pending.removeWhere((p) => p.eventId == question.eventId);
+    notifyListeners();
   }
 
   Future<void> stop() async {

@@ -14,6 +14,7 @@ import 'session/chat_route.dart';
 import 'session/dsh_client.dart';
 import 'session/notify.dart';
 import 'session/power.dart';
+import 'session/question_dialog.dart';
 import 'session/session_activity.dart';
 import 'session/sessions_page.dart';
 import 'version.dart';
@@ -96,8 +97,8 @@ class _PairGateState extends State<PairGate> with WidgetsBindingObserver {
   List<SavedPair> _saved = const [];
   String? _activeOrigin;
 
-  /// One approval dialog at a time; the queue drains as each is answered.
-  bool _approvalDialogOpen = false;
+  /// One interaction dialog at a time; the queue drains as each is answered.
+  bool _interactionOpen = false;
 
   /// One-time background-notification hint (shown after the first pairing).
   static const String _hintKey = 'lanbuddy.notificationHintShown';
@@ -133,7 +134,7 @@ class _PairGateState extends State<PairGate> with WidgetsBindingObserver {
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _openSub?.cancel();
-    ApprovalCenter.instance.removeListener(_maybeShowApproval);
+    ApprovalCenter.instance.removeListener(_maybeShowInteraction);
     super.dispose();
   }
 
@@ -179,11 +180,11 @@ class _PairGateState extends State<PairGate> with WidgetsBindingObserver {
     }
   }
 
-  /// Watch the PC's approval waterfall once a pairing exists.
+  /// Watch the PC's approval and question waterfalls once a pairing exists.
   void _watchApprovals(PairResult result) {
     if ((result.cookieHeader ?? '').isEmpty) return;
-    ApprovalCenter.instance.removeListener(_maybeShowApproval);
-    ApprovalCenter.instance.addListener(_maybeShowApproval);
+    ApprovalCenter.instance.removeListener(_maybeShowInteraction);
+    ApprovalCenter.instance.addListener(_maybeShowInteraction);
     ApprovalCenter.instance.start(
       pcOrigin: result.pcOrigin,
       cookieHeader: result.cookieHeader!,
@@ -193,7 +194,7 @@ class _PairGateState extends State<PairGate> with WidgetsBindingObserver {
       pcOrigin: result.pcOrigin,
       cookieHeader: result.cookieHeader!,
     );
-    _maybeShowApproval();
+    _maybeShowInteraction();
   }
 
   /// Open the conversation a notification tap pointed at.
@@ -300,14 +301,26 @@ class _PairGateState extends State<PairGate> with WidgetsBindingObserver {
     );
   }
 
-  /// iOS-style prompt for the oldest pending approval.
-  void _maybeShowApproval() {
-    if (_approvalDialogOpen || !mounted) return;
+  /// iOS-style prompt for the oldest pending interaction: an approval first, or
+  /// a question when that is what the PC is waiting on.
+  void _maybeShowInteraction() {
+    if (_interactionOpen || !mounted) return;
     final pending = ApprovalCenter.instance.pending;
     if (pending.isEmpty) return;
     final item = pending.first;
-    _approvalDialogOpen = true;
-    showDialog<bool>(
+    _interactionOpen = true;
+    final done = switch (item) {
+      PendingApproval() => _showApproval(item),
+      PendingQuestion() => showQuestionDialog(context, item),
+    };
+    done.whenComplete(() {
+      _interactionOpen = false;
+      _maybeShowInteraction();
+    });
+  }
+
+  Future<void> _showApproval(PendingApproval item) async {
+    final allow = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
       builder: (ctx) => AlertDialog(
@@ -369,17 +382,13 @@ class _PairGateState extends State<PairGate> with WidgetsBindingObserver {
           ),
         ],
       ),
-    ).then((allow) async {
-      _approvalDialogOpen = false;
-      if (allow != null) {
-        try {
-          await ApprovalCenter.instance.decide(item, allow: allow);
-        } catch (_) {
-          // The request may already be cancelled; just move on.
-        }
-      }
-      _maybeShowApproval();
-    });
+    );
+    if (allow == null) return;
+    try {
+      await ApprovalCenter.instance.decide(item, allow: allow);
+    } catch (_) {
+      // The request may already be cancelled; just move on.
+    }
   }
 
   /// A stored v1 cookie stays valid across sockets and dsh restarts, so a
@@ -463,7 +472,7 @@ class _PairGateState extends State<PairGate> with WidgetsBindingObserver {
   Future<void> _unpair() async {
     await ApprovalCenter.instance.stop();
     await SessionActivity.instance.stop();
-    ApprovalCenter.instance.removeListener(_maybeShowApproval);
+    ApprovalCenter.instance.removeListener(_maybeShowInteraction);
     final origin = _activeOrigin ?? _result?.pcOrigin;
     if (origin != null && origin.isNotEmpty) {
       await PairStore().remove(origin);
