@@ -11,6 +11,8 @@
 
 **DeepSeek Harness (dsh)** 的 Android 客户端。用 dsh **配对插件**显示的二维码扫一次，就能在手机上查看并续聊会话——局域网直连，无云端中转、无需账号。
 
+> 本仓库有两套源码：这一支（`app`）是 **Android 客户端**；PC 端 **dsh 插件**在 [`main`](../../tree/main) 分支。安装包始终在 [Releases](../../releases/latest)，源码树里没有 APK。
+
 <p align="center">
   <img src="docs/images/paired.jpg" alt="配对成功" width="300">
   <img src="docs/images/sessions.jpg" alt="会话列表（每行显示所用模型）" width="300">
@@ -21,7 +23,7 @@
 1. **装 App** —— 到 [**Releases**](../../releases/latest) 下载 `dsh-app-release.apk`（Android 8+）安装。
 2. **装 dsh 插件** —— 在 PC 上：
    ```powershell
-   git clone -b plugin https://github.com/lrxG/dsh-app dsh-plugin
+   git clone https://github.com/lrxG/dsh-app dsh-plugin
    ```
    然后 **dsh → 插件 → 添加插件**，粘贴 `dsh-plugin` 的绝对路径，按提示重启 dsh。（本包声明了 `dsh.bundle`，插件管理器才会接受它。）
 
@@ -66,8 +68,8 @@
 | 内容 | 位置 |
 |---|---|
 | Android 安装包（推荐） | [**Releases**](../../releases/latest) |
-| App 源码 | 本 `main` 分支（根目录即 Flutter 工程） |
-| dsh 配对插件 | [`plugin` 分支](../../tree/plugin) |
+| App 源码 | 本 `app` 分支（根目录即 Flutter 工程） |
+| dsh 配对插件 | [`main` 分支](../../tree/main) |
 | 协议笔记 | [`docs/PROTOCOL.md`](docs/PROTOCOL.md) |
 
 ## 原理
@@ -114,7 +116,7 @@
 ## 自行构建
 
 ```powershell
-git clone https://github.com/lrxG/dsh-app
+git clone -b app https://github.com/lrxG/dsh-app
 cd dsh-app
 flutter pub get
 flutter analyze

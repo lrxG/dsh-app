@@ -11,6 +11,8 @@
 
 Android client for **DeepSeek Harness (dsh)**. Pair once by scanning a QR from the dsh **pairing plugin**, then read and continue your sessions from the phone — over your own LAN, with no cloud relay and no account.
 
+> This repo holds two source trees: this branch (`app`) is the **Android client**; the **PC-side dsh plugin** lives on [`main`](../../tree/main). The APK always ships from [Releases](../../releases/latest) — never from the source tree.
+
 <p align="center">
   <img src="docs/images/paired.jpg" alt="Paired with the PC" width="300">
   <img src="docs/images/sessions.jpg" alt="Session list with per-session models" width="300">
@@ -21,7 +23,7 @@ Android client for **DeepSeek Harness (dsh)**. Pair once by scanning a QR from t
 1. **Install the app** — download `dsh-app-release.apk` from [**Releases**](../../releases/latest) (Android 8+).
 2. **Install the dsh plugin** — on the PC:
    ```powershell
-   git clone -b plugin https://github.com/lrxG/dsh-app dsh-plugin
+   git clone https://github.com/lrxG/dsh-app dsh-plugin
    ```
    Then **dsh → Plugins → Add plugin** → paste the absolute path of `dsh-plugin` → restart dsh. (The package declares `dsh.bundle`, which is what the manager looks for.)
 
@@ -66,8 +68,8 @@ Known limit (Android, not a missing feature): swiping the app away from recents,
 | Content | Location |
 |---|---|
 | Android APK (recommended) | [**Releases**](../../releases/latest) |
-| App source | this `main` branch (Flutter project at the repo root) |
-| dsh pairing plugin | [`plugin` branch](../../tree/plugin) |
+| App source | this `app` branch (Flutter project at the repo root) |
+| dsh pairing plugin | [`main` branch](../../tree/main) |
 | Protocol notes | [`docs/PROTOCOL.md`](docs/PROTOCOL.md) |
 
 ## How it works
@@ -114,7 +116,7 @@ Known limit (Android, not a missing feature): swiping the app away from recents,
 ## Build from source
 
 ```powershell
-git clone https://github.com/lrxG/dsh-app
+git clone -b app https://github.com/lrxG/dsh-app
 cd dsh-app
 flutter pub get
 flutter analyze
