@@ -77,19 +77,28 @@ class _OpenCodePageState extends State<OpenCodePage> {
           unawaited(_rememberOrigin());
         },
         onHttpError: (error) {
+          // `WebResourceRequest` carries only a URI, so only the one document we
+          // own is treated as fatal: a 404 from an API call (a session the web
+          // UI could not load) belongs to the web UI and must not replace it.
+          final uri = error.request?.uri;
+          if (uri == null) return;
+          final segments = uri.pathSegments;
+          final pairing = segments.length >= 2 &&
+              segments[0] == 'auth' &&
+              segments[1] == 'connect';
+          if (!pairing) return;
           final status = error.response?.statusCode;
           if (status == null || status < 400) return;
-          if (mounted) {
-            setState(() {
-              _loading = false;
-              _error = status == 404 || status == 410
-                  ? '这个配对链接已经用过或过期了（5 分钟内有效），重新扫一次二维码。'
-                  : 'OpenCode 返回 HTTP $status';
-            });
-          }
+          if (!mounted) return;
+          setState(() {
+            _loading = false;
+            _error = status == 404 || status == 410
+                ? '这个配对链接已经用过或过期了（5 分钟内有效），重新扫一次二维码。'
+                : '打开 OpenCode 失败（HTTP $status）';
+          });
         },
         onWebResourceError: (error) {
-          // Subresource failures (favicon, analytics) must not blank the page.
+          // Subresource failures (favicon, API calls) must not blank the page.
           if (error.isForMainFrame == false) return;
           _failOrNext('打不开 $_current\n${error.description}');
         },
