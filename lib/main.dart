@@ -19,7 +19,8 @@ import 'session/power.dart';
 import 'session/question_dialog.dart';
 import 'session/session_activity.dart';
 import 'session/sessions_page.dart';
-import 'version.dart';
+import 'update.dart';
+import 'update_sheet.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -128,6 +129,10 @@ class _PairGateState extends State<PairGate> with WidgetsBindingObserver {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _openSub = Notifier.openedSessions.listen(_openSession);
+    // The pairing screen is the only screen an unpaired phone has, so it has to
+    // carry the update entry (and the silent daily check) as well.
+    UpdateService.instance.addListener(_onUpdate);
+    unawaited(UpdateService.instance.checkIfDue());
     _restore();
     _claimPendingNotification();
   }
@@ -136,8 +141,13 @@ class _PairGateState extends State<PairGate> with WidgetsBindingObserver {
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _openSub?.cancel();
+    UpdateService.instance.removeListener(_onUpdate);
     ApprovalCenter.instance.removeListener(_maybeShowInteraction);
     super.dispose();
+  }
+
+  void _onUpdate() {
+    if (mounted) setState(() {});
   }
 
   @override
@@ -742,13 +752,23 @@ class _PairGateState extends State<PairGate> with WidgetsBindingObserver {
               ),
             ),
             Padding(
-              padding: const EdgeInsets.only(bottom: 14),
-              child: Text(
-                'DeepSeek Harness $appVersion',
-                style: const TextStyle(
-                  fontSize: 11,
-                  letterSpacing: 0.3,
-                  color: Color(0xFFC7C7CC),
+              padding: const EdgeInsets.only(bottom: 6),
+              child: InkWell(
+                onTap: () => showUpdateSheet(context),
+                borderRadius: BorderRadius.circular(8),
+                child: Padding(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  child: Text(
+                    updateFooterLabel(),
+                    style: TextStyle(
+                      fontSize: 11,
+                      letterSpacing: 0.3,
+                      color: UpdateService.instance.hasUpdate
+                          ? const Color(0xFF007AFF)
+                          : const Color(0xFFC7C7CC),
+                    ),
+                  ),
                 ),
               ),
             ),
@@ -789,7 +809,7 @@ class _PairGateState extends State<PairGate> with WidgetsBindingObserver {
               enableSuggestions: false,
               autofocus: true,
               decoration: InputDecoration(
-                hintText: '把 PC 端的配对链接整条粘进来',
+                hintText: '把 dsh 或 OpenCode 的配对链接整条粘进来',
                 filled: true,
                 fillColor: const Color(0xFFF2F2F7),
                 border: OutlineInputBorder(
@@ -818,7 +838,21 @@ class _PairGateState extends State<PairGate> with WidgetsBindingObserver {
     );
     if (value == null || value.isEmpty) return;
     final uri = Uri.tryParse(value);
-    if (uri == null || !uri.queryParameters.containsKey('token')) {
+    if (uri == null) {
+      setState(() {
+        _result = PairResult(error: '链接无效');
+        _phase = LinkPhase.failed;
+      });
+      return;
+    }
+    // Pasting is the fallback when a QR cannot be scanned: OpenCode's link opens
+    // its web UI, everything else must be a dsh pairing grant.
+    if (isOpenCodePairingUri(uri)) {
+      if (!mounted) return;
+      await openOpenCode(this.context, url: value);
+      return;
+    }
+    if (!uri.queryParameters.containsKey('token')) {
       setState(() {
         _result = PairResult(error: '链接无效（缺少 token）');
         _phase = LinkPhase.failed;

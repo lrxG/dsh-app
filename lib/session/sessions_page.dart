@@ -14,7 +14,6 @@ import '../opencode/opencode_store.dart';
 import '../pairing/scan_page.dart';
 import '../update.dart';
 import '../update_sheet.dart';
-import '../version.dart';
 
 /// Session list mirroring the PC sidebar: subagent/child durable summaries
 /// hidden (`origin:'subagent'`, same rule as dsh ui-workspace), archived
@@ -289,16 +288,6 @@ class _SessionsPageState extends State<SessionsPage> {
     return '${t.year}-${t.month}-${'${t.day}'.padLeft(2, '0')}';
   }
 
-  /// Footer text: the running version, plus what tapping it offers. A silent
-  /// daily check switches it to the newer release instead of a generic hint.
-  String get _footerLabel {
-    final service = UpdateService.instance;
-    if (service.hasUpdate) {
-      return 'DeepSeek Harness $appVersion · 有新版本 ${service.latest!.version}';
-    }
-    return 'DeepSeek Harness $appVersion · 检查更新';
-  }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -368,7 +357,7 @@ class _SessionsPageState extends State<SessionsPage> {
                   padding:
                       const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                   child: Text(
-                    _footerLabel,
+                    updateFooterLabel(),
                     style: TextStyle(
                       fontSize: 11,
                       letterSpacing: 0.3,

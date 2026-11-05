@@ -341,3 +341,14 @@ class UpdateService extends ChangeNotifier {
     }
   }
 }
+
+/// The version line both entry points show. Tapping it opens the update sheet,
+/// so it also says what tapping offers — including on the pairing screen, which
+/// is the only screen an unpaired phone can reach.
+String updateFooterLabel() {
+  final service = UpdateService.instance;
+  if (service.hasUpdate) {
+    return 'DeepSeek Harness $appVersion · 有新版本 ${service.latest!.version}';
+  }
+  return 'DeepSeek Harness $appVersion · 检查更新';
+}

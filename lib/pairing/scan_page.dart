@@ -18,16 +18,28 @@ class ScanPage extends StatefulWidget {
 
 class _ScanPageState extends State<ScanPage> {
   bool _handled = false;
+  bool _hinted = false;
 
   void _onDetect(BarcodeCapture capture) {
     if (_handled) return;
+    var sawText = false;
     for (final barcode in capture.barcodes) {
-      final uri = pairingUriFrom(barcode.rawValue) ??
-          openCodePairingUriFrom(barcode.rawValue);
+      final raw = barcode.rawValue;
+      if (raw == null || raw.trim().isEmpty) continue;
+      sawText = true;
+      final uri = pairingUriFrom(raw) ?? openCodePairingUriFrom(raw);
       if (uri == null) continue;
       _handled = true;
       Navigator.pop(context, uri);
       return;
+    }
+    // Distinguishing "camera never decoded" from "decoded, wrong link" is the
+    // whole diagnosis when a QR will not connect.
+    if (sawText && !_hinted && mounted) {
+      _hinted = true;
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('识别到二维码，但不是 dsh / OpenCode 的配对链接'),
+      ));
     }
   }
 
