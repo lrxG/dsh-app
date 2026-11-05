@@ -175,6 +175,9 @@ class _PairGateState extends State<PairGate> with WidgetsBindingObserver {
       // The PC may have been restarted or moved while the app was away; the
       // bound-state copy should not keep claiming a link that is gone.
       unawaited(_probe());
+      // A pairing done inside the WebView (or another screen) still has to show
+      // up here without a restart.
+      unawaited(_refreshOpenCodeEntry());
     }
   }
 
@@ -554,7 +557,7 @@ class _PairGateState extends State<PairGate> with WidgetsBindingObserver {
           children: [
             Expanded(
               child: Center(
-                child: Padding(
+                child: SingleChildScrollView(
                   padding: const EdgeInsets.symmetric(horizontal: 32),
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
@@ -763,22 +766,17 @@ class _PairGateState extends State<PairGate> with WidgetsBindingObserver {
                         onTap: _phase == LinkPhase.pairing ? null : () => _manual(context),
                       ),
                       if (_openCodeOrigin != null) ...[
-                        const SizedBox(height: 14),
-                        TextButton(
-                          onPressed: () {
+                        const SizedBox(height: 10),
+                        _PairAction(
+                          icon: Icons.code_rounded,
+                          label:
+                              '打开 OpenCode · ${Uri.parse(_openCodeOrigin!).host}',
+                          onTap: () {
                             final uri = Uri.tryParse(_openCodeOrigin!);
                             if (uri != null) {
                               openOpenCode(this.context, urls: [uri]);
                             }
                           },
-                          child: Text(
-                            '打开 OpenCode · ${Uri.parse(_openCodeOrigin!).host}',
-                            style: const TextStyle(
-                              fontSize: 13,
-                              fontWeight: FontWeight.w500,
-                              color: Color(0xFF007AFF),
-                            ),
-                          ),
                         ),
                       ],
                     ],
@@ -928,11 +926,15 @@ class _PairAction extends StatelessWidget {
             children: [
               Icon(icon, size: 21, color: const Color(0xFF007AFF)),
               const SizedBox(width: 10),
-              Text(
-                label,
-                style: TextStyle(
-                  fontSize: 15,
-                  color: enabled ? const Color(0xFF007AFF) : const Color(0xFFAEAEB2),
+              Expanded(
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 15,
+                    color: enabled ? const Color(0xFF007AFF) : const Color(0xFFAEAEB2),
+                  ),
                 ),
               ),
             ],

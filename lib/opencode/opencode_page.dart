@@ -19,6 +19,10 @@ import 'opencode_store.dart';
 /// address it knows, and only one of them is reachable from the phone.
 Future<void> openOpenCode(BuildContext context, {required List<Uri> urls}) async {
   if (urls.isEmpty) return;
+  // Save before the WebView even opens: `onPageFinished` may report the
+  // one-time /auth/connect URL instead of the redirect target, which used to
+  // leave the phone with nothing to reopen and forced a fresh QR every launch.
+  unawaited(OpenCodeStore().save(openCodeOriginOf(urls.first)));
   await Navigator.of(context).push(MaterialPageRoute<void>(
     builder: (_) => OpenCodePage(urls: urls),
   ));
