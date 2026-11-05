@@ -4,6 +4,8 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'opencode/opencode_link.dart';
+import 'opencode/opencode_page.dart';
 import 'pairing/scan_page.dart';
 import 'pairing/pair_client.dart';
 import 'pairing/pair_store.dart';
@@ -433,7 +435,14 @@ class _PairGateState extends State<PairGate> with WidgetsBindingObserver {
       context,
       MaterialPageRoute(builder: (_) => const ScanPage()),
     );
-    if (scanned != null) await _pair(scanned);
+    if (scanned == null || !mounted) return;
+    // One scanner, two products: OpenCode's pairing link opens its web UI,
+    // everything else is a dsh pairing attempt.
+    if (isOpenCodePairingUri(scanned)) {
+      await openOpenCode(context, url: scanned.toString());
+      return;
+    }
+    await _pair(scanned);
   }
 
   Future<void> _pair(Uri pairUrl) async {

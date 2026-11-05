@@ -1,11 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
-/// Full-screen QR scanner. Returns the scanned pairing URL to the caller.
+import '../opencode/opencode_link.dart';
+
+/// Full-screen QR scanner. Returns the scanned link to the caller, which routes
+/// it by shape: dsh pairing or OpenCode's web UI.
 ///
-/// Any http(s) URL carrying a `token` query parameter is accepted: the
-/// dsh CLI prints `/connect?token=…` (v2 grant) while the dsh plugin and
-/// the v1 flow print `/?token=…`. PairClient normalizes either shape.
+/// dsh links carry a `token` query parameter — the CLI prints `/connect?token=…`
+/// (v2 grant) while the plugin and the v1 flow print `/?token=…`; PairClient
+/// normalizes either shape. OpenCode links are `<origin>/auth/connect/<code>`.
 class ScanPage extends StatefulWidget {
   const ScanPage({super.key});
 
@@ -19,7 +22,8 @@ class _ScanPageState extends State<ScanPage> {
   void _onDetect(BarcodeCapture capture) {
     if (_handled) return;
     for (final barcode in capture.barcodes) {
-      final uri = pairingUriFrom(barcode.rawValue);
+      final uri = pairingUriFrom(barcode.rawValue) ??
+          openCodePairingUriFrom(barcode.rawValue);
       if (uri == null) continue;
       _handled = true;
       Navigator.pop(context, uri);
@@ -30,7 +34,7 @@ class _ScanPageState extends State<ScanPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('扫描 PC 配对二维码')),
+      appBar: AppBar(title: const Text('扫描配对二维码')),
       body: Stack(
         alignment: Alignment.bottomCenter,
         children: [
@@ -38,7 +42,7 @@ class _ScanPageState extends State<ScanPage> {
           const Padding(
             padding: EdgeInsets.all(24),
             child: Text(
-              '在 PC 上打开 dsh → 设置 →「扫码配对」，用手机扫描二维码',
+              'PC 上用 dsh 扫码配对，或运行 opencode pair 扫 OpenCode 的二维码',
               textAlign: TextAlign.center,
               style: TextStyle(color: Colors.white, shadows: [
                 Shadow(blurRadius: 8, color: Colors.black),

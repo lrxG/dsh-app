@@ -48,6 +48,7 @@ Done. Sessions, models and messages sync from the PC; you can keep chatting from
 | **Subagents** | A parent that delegated work is no longer shown as "idle": the row dot and "subagent ×N" count the whole agent tree; tap to read the child sessions (read-only) |
 | **Interaction** | Approval prompts (allow once / reject) · questions with options, multi-select, free-text answers or an explicit skip · background completion notifications (tap to open that conversation) |
 | **Devices** | Remember multiple PCs and switch with one tap |
+| **OpenCode** | A scanned `opencode pair` QR code opens the OpenCode web UI inside the app (WebView); its session cookie lasts 30 days, and the code icon in the list header reopens it |
 | **Updates** | Tap the version footer: checks the latest GitHub release · downloads and verifies the APK (SHA-256) · hands it to the system installer · one silent check per day |
 
 ## Background notifications

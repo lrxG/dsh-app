@@ -16,7 +16,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 0.1.18+18
+version: 0.1.19+19
 
 environment:
   sdk: ^3.13.7
@@ -44,6 +44,7 @@ dependencies:
   flutter_image_compress: ^2.3.0 # downscale before the base64 image part
   path_provider: ^2.1.5         # cache dir for the downloaded update APK
   crypto: ^3.0.7                # SHA-256 check of the release asset
+  webview_flutter: ^4.14.1      # OpenCode's web UI inside the app
 
 dev_dependencies:
   flutter_test:
