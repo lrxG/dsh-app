@@ -14,19 +14,20 @@ import '../pairing/scan_page.dart';
 import 'opencode_link.dart';
 import 'opencode_store.dart';
 
-/// Open [url] (a pairing link the first time, the saved origin afterwards).
-Future<void> openOpenCode(BuildContext context, {required String url}) async {
-  final uri = Uri.tryParse(url);
-  if (uri != null) unawaited(OpenCodeStore().save(openCodeOriginOf(uri)));
+/// Open OpenCode's web UI for [urls] (a pairing link first, the saved origin
+/// afterwards). Candidates are tried in order: `opencode pair` publishes every
+/// address it knows, and only one of them is reachable from the phone.
+Future<void> openOpenCode(BuildContext context, {required List<Uri> urls}) async {
+  if (urls.isEmpty) return;
   await Navigator.of(context).push(MaterialPageRoute<void>(
-    builder: (_) => OpenCodePage(initialUrl: url),
+    builder: (_) => OpenCodePage(urls: urls),
   ));
 }
 
 class OpenCodePage extends StatefulWidget {
-  const OpenCodePage({super.key, required this.initialUrl});
+  const OpenCodePage({super.key, required this.urls});
 
-  final String initialUrl;
+  final List<Uri> urls;
 
   @override
   State<OpenCodePage> createState() => _OpenCodePageState();
@@ -35,9 +36,13 @@ class OpenCodePage extends StatefulWidget {
 class _OpenCodePageState extends State<OpenCodePage> {
   late final WebViewController _controller;
 
+  late List<Uri> _urls = widget.urls;
+  int _index = 0;
   int _progress = 0;
   bool _loading = true;
   String? _error;
+
+  Uri get _current => _urls[_index];
 
   @override
   void initState() {
@@ -58,12 +63,14 @@ class _OpenCodePageState extends State<OpenCodePage> {
           }
         },
         onPageFinished: (_) {
-          if (mounted) {
-            setState(() {
-              _loading = false;
-              _progress = 100;
-            });
-          }
+          if (!mounted) return;
+          setState(() {
+            _loading = false;
+            _progress = 100;
+          });
+          // The pairing link redirects to the app itself; remember that origin
+          // so the next visit needs no QR.
+          unawaited(_rememberOrigin());
         },
         onHttpError: (error) {
           final status = error.response?.statusCode;
@@ -80,15 +87,42 @@ class _OpenCodePageState extends State<OpenCodePage> {
         onWebResourceError: (error) {
           // Subresource failures (favicon, analytics) must not blank the page.
           if (error.isForMainFrame == false) return;
-          if (mounted) {
-            setState(() {
-              _loading = false;
-              _error = '打不开 ${widget.initialUrl}\n${error.description}';
-            });
-          }
+          _failOrNext('打不开 $_current\n${error.description}');
         },
       ))
-      ..loadRequest(Uri.parse(widget.initialUrl));
+      ..loadRequest(_current);
+  }
+
+  Future<void> _rememberOrigin() async {
+    final url = await _controller.currentUrl();
+    if (url == null) return;
+    final uri = Uri.tryParse(url);
+    if (uri == null) return;
+    if (uri.pathSegments.length >= 2 &&
+        uri.pathSegments[0] == 'auth' &&
+        uri.pathSegments[1] == 'connect') {
+      return;
+    }
+    await OpenCodeStore().save(openCodeOriginOf(uri));
+  }
+
+  /// A dead candidate is not a failed connection: move on to the next address
+  /// before telling the user anything.
+  void _failOrNext(String message) {
+    if (!mounted) return;
+    if (_index + 1 < _urls.length) {
+      setState(() {
+        _index++;
+        _loading = true;
+        _error = null;
+      });
+      _controller.loadRequest(_current);
+      return;
+    }
+    setState(() {
+      _loading = false;
+      _error = message;
+    });
   }
 
   Future<void> _reload() async {
@@ -101,22 +135,24 @@ class _OpenCodePageState extends State<OpenCodePage> {
 
   /// Pair with another OpenCode server without leaving the app.
   Future<void> _scan() async {
-    final scanned = await Navigator.of(context).push<Uri>(
+    final raw = await Navigator.of(context).push<String>(
       MaterialPageRoute(builder: (_) => const ScanPage()),
     );
-    if (scanned == null || !mounted) return;
-    if (!isOpenCodePairingUri(scanned)) {
+    if (raw == null || !mounted) return;
+    final urls = openCodePairingUrisFrom(raw);
+    if (urls.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('这不是 OpenCode 的配对二维码')),
       );
       return;
     }
-    unawaited(OpenCodeStore().save(openCodeOriginOf(scanned)));
     setState(() {
+      _urls = urls;
+      _index = 0;
       _error = null;
       _loading = true;
     });
-    await _controller.loadRequest(scanned);
+    await _controller.loadRequest(_current);
   }
 
   @override

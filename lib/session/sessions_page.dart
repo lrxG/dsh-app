@@ -8,10 +8,6 @@ import 'chat_page.dart';
 import 'chat_route.dart';
 import 'mux_client.dart';
 import 'session_activity.dart';
-import '../opencode/opencode_link.dart';
-import '../opencode/opencode_page.dart';
-import '../opencode/opencode_store.dart';
-import '../pairing/scan_page.dart';
 import '../update.dart';
 import '../update_sheet.dart';
 
@@ -307,11 +303,6 @@ class _SessionsPageState extends State<SessionsPage> {
           ),
         ),
         actions: [
-          IconButton(
-            icon: const Icon(Icons.code_rounded, size: 22),
-            tooltip: 'OpenCode',
-            onPressed: _openOpenCode,
-          ),
           IconButton(
             icon: const Icon(Icons.search, size: 23),
             tooltip: '搜索会话',
@@ -895,32 +886,6 @@ class _SessionsPageState extends State<SessionsPage> {
       ),
     );
     if (mounted) _refresh();
-  }
-
-  /// Open the remembered OpenCode server, or scan for one on first use.
-  Future<void> _openOpenCode() async {
-    final origin = await OpenCodeStore().load();
-    if (!mounted) return;
-    if (origin == null) {
-      await _scanOpenCode();
-      return;
-    }
-    await openOpenCode(context, url: origin);
-  }
-
-  Future<void> _scanOpenCode() async {
-    final scanned = await Navigator.push<Uri>(
-      context,
-      MaterialPageRoute(builder: (_) => const ScanPage()),
-    );
-    if (scanned == null || !mounted) return;
-    if (!isOpenCodePairingUri(scanned)) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('这不是 OpenCode 的配对二维码')),
-      );
-      return;
-    }
-    await openOpenCode(context, url: scanned.toString());
   }
 
   /// Long-press → archive one session (`workspace/archiveSession`), the same

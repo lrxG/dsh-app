@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'opencode/opencode_link.dart';
 import 'opencode/opencode_page.dart';
+import 'opencode/opencode_store.dart';
 import 'pairing/scan_page.dart';
 import 'pairing/pair_client.dart';
 import 'pairing/pair_store.dart';
@@ -110,6 +111,9 @@ class _PairGateState extends State<PairGate> with WidgetsBindingObserver {
   String? _pendingOpen;
   StreamSubscription<String>? _openSub;
 
+  /// The OpenCode server this phone paired with, if any.
+  String? _openCodeOrigin;
+
   /// Whether the bound PC answers right now. A stored pairing survives dsh
   /// restarts, so "已与 PC 绑定" used to stay on screen even after the PC had
   /// moved to another port or plugged in a different network. `null` means
@@ -133,6 +137,7 @@ class _PairGateState extends State<PairGate> with WidgetsBindingObserver {
     // carry the update entry (and the silent daily check) as well.
     UpdateService.instance.addListener(_onUpdate);
     unawaited(UpdateService.instance.checkIfDue());
+    unawaited(_refreshOpenCodeEntry());
     _restore();
     _claimPendingNotification();
   }
@@ -148,6 +153,14 @@ class _PairGateState extends State<PairGate> with WidgetsBindingObserver {
 
   void _onUpdate() {
     if (mounted) setState(() {});
+  }
+
+  /// The pair screen is OpenCode's only entry point: scanning its QR opens the
+  /// web UI, and this row brings back the server that session belongs to.
+  Future<void> _refreshOpenCodeEntry() async {
+    final origin = await OpenCodeStore().load();
+    if (!mounted) return;
+    setState(() => _openCodeOrigin = origin);
   }
 
   @override
@@ -441,18 +454,21 @@ class _PairGateState extends State<PairGate> with WidgetsBindingObserver {
   }
 
   Future<void> _scan() async {
-    final scanned = await Navigator.push<Uri>(
+    final raw = await Navigator.push<String>(
       context,
       MaterialPageRoute(builder: (_) => const ScanPage()),
     );
-    if (scanned == null || !mounted) return;
-    // One scanner, two products: OpenCode's pairing link opens its web UI,
-    // everything else is a dsh pairing attempt.
-    if (isOpenCodePairingUri(scanned)) {
-      await openOpenCode(context, url: scanned.toString());
+    if (raw == null || !mounted) return;
+    // One scanner, two products: OpenCode's payload opens its web UI, a dsh
+    // link pairs exactly as before.
+    final openCode = openCodePairingUrisFrom(raw);
+    if (openCode.isNotEmpty) {
+      await openOpenCode(context, urls: openCode);
+      unawaited(_refreshOpenCodeEntry());
       return;
     }
-    await _pair(scanned);
+    final uri = pairingUriFrom(raw);
+    if (uri != null) await _pair(uri);
   }
 
   Future<void> _pair(Uri pairUrl) async {
@@ -746,6 +762,25 @@ class _PairGateState extends State<PairGate> with WidgetsBindingObserver {
                         label: '手动粘贴配对链接',
                         onTap: _phase == LinkPhase.pairing ? null : () => _manual(context),
                       ),
+                      if (_openCodeOrigin != null) ...[
+                        const SizedBox(height: 14),
+                        TextButton(
+                          onPressed: () {
+                            final uri = Uri.tryParse(_openCodeOrigin!);
+                            if (uri != null) {
+                              openOpenCode(this.context, urls: [uri]);
+                            }
+                          },
+                          child: Text(
+                            '打开 OpenCode · ${Uri.parse(_openCodeOrigin!).host}',
+                            style: const TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w500,
+                              color: Color(0xFF007AFF),
+                            ),
+                          ),
+                        ),
+                      ],
                     ],
                   ),
                 ),
@@ -845,11 +880,13 @@ class _PairGateState extends State<PairGate> with WidgetsBindingObserver {
       });
       return;
     }
-    // Pasting is the fallback when a QR cannot be scanned: OpenCode's link opens
-    // its web UI, everything else must be a dsh pairing grant.
-    if (isOpenCodePairingUri(uri)) {
-      if (!mounted) return;
-      await openOpenCode(this.context, url: value);
+    // Pasting is the fallback when a QR cannot be scanned: OpenCode's payload
+    // opens its web UI, everything else must be a dsh pairing grant.
+    final openCode = openCodePairingUrisFrom(value);
+    if (openCode.isNotEmpty) {
+      if (!context.mounted) return;
+      await openOpenCode(context, urls: openCode);
+      unawaited(_refreshOpenCodeEntry());
       return;
     }
     if (!uri.queryParameters.containsKey('token')) {
