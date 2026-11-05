@@ -633,7 +633,7 @@ class _PairGateState extends State<PairGate> with WidgetsBindingObserver {
                           ),
                         ),
                       ],
-                      if (_phase == LinkPhase.paired && _saved.length > 1) ...[
+                      if (_saved.length > 1 || _openCodeOrigin != null) ...[
                         const SizedBox(height: 14),
                         Container(
                           width: double.infinity,
@@ -701,6 +701,57 @@ class _PairGateState extends State<PairGate> with WidgetsBindingObserver {
                                     ),
                                   ),
                                 ),
+                              // OpenCode lives in the same list as the dsh PCs: it
+                              // is another saved server, not a separate feature.
+                              if (_openCodeOrigin != null) ...[
+                                if (_saved.isNotEmpty)
+                                  const Divider(
+                                      height: 0.5,
+                                      thickness: 0.5,
+                                      indent: 14,
+                                      endIndent: 14,
+                                      color: Color(0xFFE5E5EA)),
+                                InkWell(
+                                  onTap: () {
+                                    final uri = Uri.tryParse(_openCodeOrigin!);
+                                    if (uri != null) {
+                                      openOpenCode(this.context, urls: [uri]);
+                                    }
+                                  },
+                                  child: Padding(
+                                    padding:
+                                        const EdgeInsets.fromLTRB(14, 11, 8, 11),
+                                    child: Row(
+                                      children: [
+                                        const Icon(Icons.code_rounded,
+                                            size: 17, color: Color(0xFF007AFF)),
+                                        const SizedBox(width: 8),
+                                        Expanded(
+                                          child: Text(
+                                            'OpenCode · ${Uri.parse(_openCodeOrigin!).host}',
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: const TextStyle(
+                                                fontSize: 14,
+                                                color: Color(0xFF1C1C1E)),
+                                          ),
+                                        ),
+                                        IconButton(
+                                          visualDensity: VisualDensity.compact,
+                                          icon: const Icon(Icons.close,
+                                              size: 16, color: Color(0xFFAEAEB2)),
+                                          tooltip: '移除 OpenCode 服务器',
+                                          onPressed: () async {
+                                            await OpenCodeStore().clear();
+                                            if (!mounted) return;
+                                            setState(() => _openCodeOrigin = null);
+                                          },
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              ],
                             ],
                           ),
                         ),
@@ -765,20 +816,6 @@ class _PairGateState extends State<PairGate> with WidgetsBindingObserver {
                         label: '手动粘贴配对链接',
                         onTap: _phase == LinkPhase.pairing ? null : () => _manual(context),
                       ),
-                      if (_openCodeOrigin != null) ...[
-                        const SizedBox(height: 10),
-                        _PairAction(
-                          icon: Icons.code_rounded,
-                          label:
-                              '打开 OpenCode · ${Uri.parse(_openCodeOrigin!).host}',
-                          onTap: () {
-                            final uri = Uri.tryParse(_openCodeOrigin!);
-                            if (uri != null) {
-                              openOpenCode(this.context, urls: [uri]);
-                            }
-                          },
-                        ),
-                      ],
                     ],
                   ),
                 ),

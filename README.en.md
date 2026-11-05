@@ -48,7 +48,7 @@ Done. Sessions, models and messages sync from the PC; you can keep chatting from
 | **Subagents** | A parent that delegated work is no longer shown as "idle": the row dot and "subagent ×N" count the whole agent tree; tap to read the child sessions (read-only) |
 | **Interaction** | Approval prompts (allow once / reject) · questions with options, multi-select, free-text answers or an explicit skip · background completion notifications (tap to open that conversation) |
 | **Devices** | Remember multiple PCs and switch with one tap |
-| **OpenCode** | Scanning an `opencode pair` QR code (its JSON pairing payload is recognised automatically) opens the OpenCode web UI inside the app; its session cookie lasts 30 days, and the pairing screen's "Open OpenCode" reopens it |
+| **OpenCode** | Scanning an `opencode pair` QR code (its JSON pairing payload is recognised automatically) opens the OpenCode web UI inside the app; its session cookie lasts 30 days, and it then sits in the pairing screen's server list next to the dsh PCs |
 | **Updates** | The version line on the pairing screen and on the session list checks the latest GitHub release, downloads and verifies the APK (SHA-256) and hands it to the system installer; one silent check per day |
 
 ## Background notifications
