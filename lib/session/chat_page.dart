@@ -587,6 +587,16 @@ class _ChatPageState extends State<ChatPage> with RouteAware {
     final bubbles = decodeSnapshot(value);
     final inbox = decodeSnapshotInbox(value);
     final permission = decodeSnapshotPermission(value);
+    // When the transcript comes out empty, the raw record count says which
+    // side lost it: 0 means the PC sent no history, >0 means our filter did.
+    final records = value['records'];
+    final rawRecords = records is List ? records.length : -1;
+    final Object? firstEvent = records is List && records.isNotEmpty && records.first is Map
+        ? (records.first as Map)['event']
+        : null;
+    debugPrint('[lanbuddy] snapshot records=$rawRecords '
+        'first=${firstEvent is Map ? firstEvent['type'] : firstEvent?.runtimeType} '
+        'bubbles=${bubbles.length}');
     _autoFailures = 0;
     setState(() {
       if (permission != null) _permission = permission;
@@ -603,7 +613,13 @@ class _ChatPageState extends State<ChatPage> with RouteAware {
       // answer on top of the durable one it now contains.
       _live = null;
       _busy = false;
-      _state = '已同步 ${_messages.length} 条消息';
+      _state = bubbles.isEmpty
+          ? (rawRecords < 0
+              ? '已同步 0 条消息 · PC 未返回历史字段'
+              : rawRecords == 0
+                  ? '已同步 0 条消息 · PC 返回 0 条历史'
+                  : '已同步 0 条消息 · 收到 $rawRecords 条但无法解析')
+          : '已同步 ${_messages.length} 条消息';
       _stateColor = Colors.green;
       _unseen = 0;
       _atBottom = true;
