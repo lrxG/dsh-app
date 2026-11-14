@@ -66,9 +66,30 @@ class ApprovalCenter extends ChangeNotifier {
   bool _stopped = true;
   final List<PendingInteraction> _pending = [];
 
+  /// Whether the `$events` stream is live. A failed subscription used to be a
+  /// silent 5-second retry loop, which looks exactly like "approvals never
+  /// arrive"; the UI surfaces this state instead.
+  bool _ready = false;
+  String? _channelError;
+
   List<PendingInteraction> get pending => List.unmodifiable(_pending);
 
+  /// True once the Host sent the stream's `ready` frame.
+  bool get channelReady => _ready;
+
+  /// Last reason the channel is down: mux error code, socket error, or null
+  /// while connected.
+  String? get channelError => _channelError;
+
   bool get isRunning => !_stopped && _mux != null;
+
+  /// Reconnect immediately when a screen is resumed instead of waiting for the
+  /// five-second retry timer (Android freezes timers while backgrounded).
+  void ensureConnected() {
+    if (_stopped || _ready || _origin == null) return;
+    _retry?.cancel();
+    unawaited(_dial());
+  }
 
   /// (Re)connect for one paired PC.
   Future<void> start({
@@ -79,6 +100,8 @@ class ApprovalCenter extends ChangeNotifier {
     _cookie = cookieHeader;
     _rpc = DshRpc(pcOrigin: pcOrigin, cookieHeader: cookieHeader);
     _stopped = false;
+    _ready = false;
+    _channelError = null;
     await _dial();
   }
 
@@ -86,10 +109,12 @@ class ApprovalCenter extends ChangeNotifier {
     if (_stopped) return;
     _retry?.cancel();
     _clientId = null;
+    _ready = false;
     final mux = MuxClient(pcOrigin: _origin!, cookieHeader: _cookie!);
     try {
       await mux.connect();
-    } catch (_) {
+    } catch (e) {
+      _channelError = 'dial: $e';
       _scheduleRetry();
       return;
     }
@@ -98,8 +123,14 @@ class ApprovalCenter extends ChangeNotifier {
     _mux = mux;
     _sub = mux.open(r'$events', const <String, dynamic>{}).listen(
       _onFrame,
-      onError: (_) => _scheduleRetry(),
-      onDone: _scheduleRetry,
+      onError: (Object e) {
+        _channelError = 'socket: $e';
+        _scheduleRetry();
+      },
+      onDone: () {
+        _channelError ??= 'closed';
+        _scheduleRetry();
+      },
       cancelOnError: true,
     );
   }
@@ -107,11 +138,24 @@ class ApprovalCenter extends ChangeNotifier {
   void _scheduleRetry() {
     if (_stopped) return;
     _clientId = null;
+    _ready = false;
     _retry?.cancel();
     _retry = Timer(const Duration(seconds: 5), _dial);
+    notifyListeners();
   }
 
   void _onFrame(MuxEvent event) {
+    if (event is MuxError) {
+      _channelError = '${event.code}: ${event.message}';
+      debugPrint('[lanbuddy] \$events stream error ${event.code}: ${event.message}');
+      notifyListeners();
+      return;
+    }
+    if (event is MuxEnd) {
+      _channelError ??= 'ended';
+      debugPrint('[lanbuddy] \$events stream ended');
+      return;
+    }
     if (event is! MuxItem) return;
     final frame = decodeRemoteEvent(event.value);
     switch (frame) {
@@ -119,6 +163,10 @@ class ApprovalCenter extends ChangeNotifier {
         return;
       case RemoteEventsReady(:final clientId):
         _clientId = clientId;
+        _ready = true;
+        _channelError = null;
+        debugPrint('[lanbuddy] \$events ready ($clientId)');
+        notifyListeners();
       case RemoteEventWaterfall(
           :final eventId,
           :final event,
@@ -126,6 +174,7 @@ class ApprovalCenter extends ChangeNotifier {
           :final request,
         ):
         if (_pending.any((p) => p.eventId == eventId)) return;
+        debugPrint('[lanbuddy] waterfall $event ($eventId)');
         switch (event) {
           case 'approval/request':
             final reason = _reasonOf(request);
@@ -223,6 +272,8 @@ class ApprovalCenter extends ChangeNotifier {
     _stopped = true;
     _retry?.cancel();
     _clientId = null;
+    _ready = false;
+    _channelError = null;
     await _sub?.cancel();
     _sub = null;
     await _mux?.close();

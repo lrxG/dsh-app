@@ -8,6 +8,7 @@ import 'chat_page.dart';
 import 'chat_route.dart';
 import 'mux_client.dart';
 import 'session_activity.dart';
+import 'approval_center.dart';
 import '../update.dart';
 import '../update_sheet.dart';
 
@@ -70,6 +71,8 @@ class _SessionsPageState extends State<SessionsPage> {
     _rpc = DshRpc(pcOrigin: widget.pcOrigin, cookieHeader: widget.cookieHeader);
     // Live agent status (including subagent descendants) drives the row dots.
     SessionActivity.instance.addListener(_onActivity);
+    // The footer reports a dead approval channel instead of failing silently.
+    ApprovalCenter.instance.addListener(_onActivity);
     // The version footer doubles as the update entry; a silent daily check makes
     // it say when a newer release exists.
     UpdateService.instance.addListener(_onUpdate);
@@ -81,6 +84,7 @@ class _SessionsPageState extends State<SessionsPage> {
   @override
   void dispose() {
     SessionActivity.instance.removeListener(_onActivity);
+    ApprovalCenter.instance.removeListener(_onActivity);
     UpdateService.instance.removeListener(_onUpdate);
     super.dispose();
   }
@@ -339,26 +343,43 @@ class _SessionsPageState extends State<SessionsPage> {
           ),
           SafeArea(
             top: false,
-            child: Padding(
-              padding: const EdgeInsets.only(top: 2, bottom: 6),
-              child: InkWell(
-                onTap: () => showUpdateSheet(context),
-                borderRadius: BorderRadius.circular(8),
-                child: Padding(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                  child: Text(
-                    updateFooterLabel(),
-                    style: TextStyle(
-                      fontSize: 11,
-                      letterSpacing: 0.3,
-                      color: UpdateService.instance.hasUpdate
-                          ? const Color(0xFF007AFF)
-                          : const Color(0xFFC7C7CC),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (!ApprovalCenter.instance.channelReady)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 2),
+                    child: Text(
+                      '审批通道未连接${ApprovalCenter.instance.channelError == null ? ' · 重试中' : ' · ${ApprovalCenter.instance.channelError}'}',
+                      textAlign: TextAlign.center,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                          fontSize: 10, color: Color(0xFFE5453C)),
+                    ),
+                  ),
+                Padding(
+                  padding: const EdgeInsets.only(top: 2, bottom: 6),
+                  child: InkWell(
+                    onTap: () => showUpdateSheet(context),
+                    borderRadius: BorderRadius.circular(8),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 10, vertical: 4),
+                      child: Text(
+                        updateFooterLabel(),
+                        style: TextStyle(
+                          fontSize: 11,
+                          letterSpacing: 0.3,
+                          color: UpdateService.instance.hasUpdate
+                              ? const Color(0xFF007AFF)
+                              : const Color(0xFFC7C7CC),
+                        ),
+                      ),
                     ),
                   ),
                 ),
-              ),
+              ],
             ),
           ),
         ],

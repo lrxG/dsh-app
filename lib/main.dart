@@ -178,6 +178,9 @@ class _PairGateState extends State<PairGate> with WidgetsBindingObserver {
       // A pairing done inside the WebView (or another screen) still has to show
       // up here without a restart.
       unawaited(_refreshOpenCodeEntry());
+      // A backgrounded phone may have lost the forwarded-event socket; do not
+      // wait for the retry timer to notice.
+      ApprovalCenter.instance.ensureConnected();
     }
   }
 
