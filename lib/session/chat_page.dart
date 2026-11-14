@@ -87,6 +87,25 @@ class _ChatPageState extends State<ChatPage> with RouteAware {
         ..._inbox['next-turn']!,
       ];
 
+  /// The session's current permission preset, read from the follow snapshot
+  /// (`projections.values.permissions`). Null until the first snapshot or when
+  /// the PC composes no permission service.
+  String? _permission;
+
+  /// Presets the PC's permission service publishes; cached after the first
+  /// picker open so the sheet label can show a friendly name.
+  List<PermissionPreset> _permissionOptions = const [];
+
+  /// Sheet row label: the PC's own preset name when known.
+  String get _permissionLabel {
+    final value = _permission;
+    if (value == null) return '权限';
+    for (final option in _permissionOptions) {
+      if (option.value == value) return '权限：${option.name}';
+    }
+    return '权限：$value';
+  }
+
   /// Local title (rename updates it without rebuilding the parent list).
   late String _title = widget.title;
 
@@ -157,6 +176,7 @@ class _ChatPageState extends State<ChatPage> with RouteAware {
       if (mounted) setState(() {});
     });
     _scroll.addListener(_onScroll);
+    if (!widget.isSubagent) unawaited(_loadPermissionOptions());
     _follow(auto: false);
   }
 
@@ -566,8 +586,10 @@ class _ChatPageState extends State<ChatPage> with RouteAware {
   void _onSnapshot(Map value) {
     final bubbles = decodeSnapshot(value);
     final inbox = decodeSnapshotInbox(value);
+    final permission = decodeSnapshotPermission(value);
     _autoFailures = 0;
     setState(() {
+      if (permission != null) _permission = permission;
       _messages
         ..clear()
         ..addAll(bubbles);
@@ -721,8 +743,10 @@ class _ChatPageState extends State<ChatPage> with RouteAware {
                 _SheetAction(label: '分叉会话', onTap: () => Navigator.pop(ctx, 'fork')),
               ],
               _SheetAction(label: '子任务', onTap: () => Navigator.pop(ctx, 'subagents')),
-              if (!widget.isSubagent)
+              if (!widget.isSubagent) ...[
+                _SheetAction(label: _permissionLabel, onTap: () => Navigator.pop(ctx, 'permission')),
                 _SheetAction(label: '后台任务', onTap: () => Navigator.pop(ctx, 'jobs')),
+              ],
               const Divider(height: 0.5, thickness: 0.5, color: Color(0xFFE5E5EA)),
               _SheetAction(label: '取消', bold: true, onTap: () => Navigator.pop(ctx, 'cancel')),
             ],
@@ -737,6 +761,8 @@ class _ChatPageState extends State<ChatPage> with RouteAware {
         _fork();
       case 'subagents':
         await _openSubagents();
+      case 'permission':
+        await _pickPermission();
       case 'jobs':
         if (mounted) {
           await Navigator.push(
@@ -906,6 +932,126 @@ class _ChatPageState extends State<ChatPage> with RouteAware {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(text), backgroundColor: const Color(0xFFE5453C)),
     );
+  }
+
+  /// Warm the preset names so the sheet row shows the PC's own labels before
+  /// the first picker open.
+  Future<void> _loadPermissionOptions() async {
+    try {
+      final options = await _rpc.listPermissionPresets();
+      if (mounted && options.isNotEmpty) {
+        setState(() => _permissionOptions = options);
+      }
+    } catch (_) {
+      // The switcher still works on tap; a failed prefetch is not an error.
+    }
+  }
+
+  /// Switch this session's permission preset (full access, workspace write…).
+  ///
+  /// dsh publishes the catalog at `permissionPresets/catalog` and the only
+  /// write path is the `/permission <preset>` command, so this sheet is a thin
+  /// wrapper over both.
+  Future<void> _pickPermission() async {
+    late final List<PermissionPreset> options;
+    try {
+      options = await _rpc.listPermissionPresets();
+    } on RpcError catch (e) {
+      if (mounted) _snack('读取权限设置失败：${e.code} ${e.message}');
+      return;
+    } catch (e) {
+      if (mounted) _snack('读取权限设置失败：$e');
+      return;
+    }
+    if (!mounted) return;
+    if (options.isEmpty) {
+      _snack('PC 没有可切换的权限预设');
+      return;
+    }
+    setState(() => _permissionOptions = options);
+    final current = _permission;
+    final picked = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => SafeArea(
+        child: Container(
+          margin: const EdgeInsets.fromLTRB(12, 0, 12, 10),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(14),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Padding(
+                padding: EdgeInsets.fromLTRB(18, 14, 18, 6),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    '权限模式',
+                    style: TextStyle(fontSize: 13, color: Color(0xFF8E8E93)),
+                  ),
+                ),
+              ),
+              for (final option in options)
+                InkWell(
+                  onTap: () => Navigator.pop(ctx, option.value),
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(18, 11, 14, 11),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                option.name,
+                                style: const TextStyle(
+                                    fontSize: 15, color: Color(0xFF1C1C1E)),
+                              ),
+                              if (option.description != null) ...[
+                                const SizedBox(height: 2),
+                                Text(
+                                  option.description!,
+                                  style: const TextStyle(
+                                    fontSize: 12,
+                                    height: 1.35,
+                                    color: Color(0xFF8E8E93),
+                                  ),
+                                ),
+                              ],
+                            ],
+                          ),
+                        ),
+                        if (option.value == current)
+                          const Padding(
+                            padding: EdgeInsets.only(left: 8, top: 2),
+                            child: Icon(Icons.check,
+                                size: 18, color: Color(0xFF007AFF)),
+                          ),
+                      ],
+                    ),
+                  ),
+                ),
+              const Divider(height: 0.5, thickness: 0.5, color: Color(0xFFE5E5EA)),
+              _SheetAction(
+                label: '取消',
+                bold: true,
+                onTap: () => Navigator.pop(ctx),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (picked == null || picked == current || !mounted) return;
+    try {
+      await _rpc.setPermissionPreset(_sessionId, picked);
+      if (mounted) setState(() => _permission = picked);
+    } on RpcError catch (e) {
+      if (mounted) _snack('切换权限失败：${e.code} ${e.message}');
+    }
   }
 
   /// Stop the running turn (and its subagent descendants).

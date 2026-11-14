@@ -253,6 +253,33 @@ class DshRpc {
     });
   }
 
+  /// The process-level permission catalog (`permissionPresets/catalog`).
+  ///
+  /// Empty when the PC composes no permission service; the chat page then
+  /// hides the switcher.
+  Future<List<PermissionPreset>> listPermissionPresets() async {
+    final value = await call('permissionPresets/catalog', <String, dynamic>{});
+    final map = value is Map ? value : const <String, dynamic>{};
+    final options = map['options'];
+    if (options is! List) return const [];
+    return options
+        .map(PermissionPreset.fromWire)
+        .whereType<PermissionPreset>()
+        .toList();
+  }
+
+  /// Switch one session's permission preset.
+  ///
+  /// dsh's only write path is the `/permission <preset>` command
+  /// (`packages/interaction/permission-presets`); `agent` is the session id.
+  Future<void> setPermissionPreset(String sessionId, String preset) async {
+    await call('commands/execute', <String, dynamic>{
+      'agent': sessionId,
+      'line': '/permission $preset',
+      'submittedAttachments': const <Object>[],
+    });
+  }
+
   /// Fresh-enough correlation id without pulling in crypto packages.
   static String _rpcId() {
     final r = Random();
@@ -474,6 +501,37 @@ class AgentPreset {
       description:
           raw['description'] is String ? raw['description'] as String : null,
       broken: raw['broken'] is String ? raw['broken'] as String : null,
+    );
+  }
+}
+
+/// One selectable permission preset (`permissionPresets/catalog`).
+class PermissionPreset {
+  const PermissionPreset({
+    required this.value,
+    required this.name,
+    this.description,
+  });
+
+  /// Stable option value sent back as `/permission <value>`.
+  final String value;
+
+  /// Display label the PC's own permissions popup shows.
+  final String name;
+  final String? description;
+
+  static PermissionPreset? fromWire(Object? raw) {
+    if (raw is! Map) return null;
+    final value = raw['value'];
+    if (value is! String || value.isEmpty) return null;
+    final name = raw['name'];
+    final description = raw['description'];
+    return PermissionPreset(
+      value: value,
+      name: name is String && name.isNotEmpty ? name : value,
+      description: description is String && description.isNotEmpty
+          ? description
+          : null,
     );
   }
 }

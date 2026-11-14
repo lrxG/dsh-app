@@ -174,6 +174,21 @@ Map<String, List<QueuedMessage>> decodeSnapshotInbox(dynamic snapshot) {
   return decodeInbox(values['inbox']);
 }
 
+/// Current permission preset from a follow `snapshot`
+/// (`projections.values.permissions.currentValue`). Null when the PC composes
+/// no permission service, in which case the app hides the control.
+String? decodeSnapshotPermission(dynamic snapshot) {
+  if (snapshot is! Map) return null;
+  final projections = snapshot['projections'];
+  if (projections is! Map) return null;
+  final values = projections['values'];
+  if (values is! Map) return null;
+  final permissions = values['permissions'];
+  if (permissions is! Map) return null;
+  final current = permissions['currentValue'];
+  return current is String && current.isNotEmpty ? current : null;
+}
+
 /// Decode one `inbox` projection value into rows keyed by target.
 Map<String, List<QueuedMessage>> decodeInbox(Object? value) {
   final out = <String, List<QueuedMessage>>{for (final target in inboxTargets) target: <QueuedMessage>[]};
