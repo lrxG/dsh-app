@@ -1047,8 +1047,13 @@ class _ChatPageState extends State<ChatPage> with RouteAware {
     );
     if (picked == null || picked == current || !mounted) return;
     try {
-      await _rpc.setPermissionPreset(_sessionId, picked);
-      if (mounted) setState(() => _permission = picked);
+      final applied = await _rpc.setPermissionPreset(_sessionId, picked);
+      if (!mounted) return;
+      if (!applied) {
+        _snack('PC 没有执行 /permission 命令，无法切换');
+        return;
+      }
+      setState(() => _permission = picked);
     } on RpcError catch (e) {
       if (mounted) _snack('切换权限失败：${e.code} ${e.message}');
     }

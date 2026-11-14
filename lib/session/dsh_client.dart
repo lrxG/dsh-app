@@ -271,13 +271,18 @@ class DshRpc {
   /// Switch one session's permission preset.
   ///
   /// dsh's only write path is the `/permission <preset>` command
-  /// (`packages/interaction/permission-presets`); `agent` is the session id.
-  Future<void> setPermissionPreset(String sessionId, String preset) async {
-    await call('commands/execute', <String, dynamic>{
-      'agent': sessionId,
+  /// (`packages/interaction/permission-presets`). The wire field is `agentId`
+  /// (`name: agent, wire: agentId` in the gateway descriptor) even though the
+  /// Host parameter is called `agent`.
+  ///
+  /// Returns false when the Host resolved no such command.
+  Future<bool> setPermissionPreset(String sessionId, String preset) async {
+    final value = await call('commands/execute', <String, dynamic>{
+      'agentId': sessionId,
       'line': '/permission $preset',
       'submittedAttachments': const <Object>[],
     });
+    return value != null;
   }
 
   /// Fresh-enough correlation id without pulling in crypto packages.
