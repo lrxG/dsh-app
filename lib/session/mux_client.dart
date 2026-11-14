@@ -108,6 +108,10 @@ class MuxClient {
                 },
           'maxMessages': maxMessages,
           'assistantStream': true,
+          // The Web client activates the opened session so a cold Session gets
+          // a live runtime and later reads see its events; without it the phone
+          // stayed on a passive read.
+          'activate': true,
         },
       });
 

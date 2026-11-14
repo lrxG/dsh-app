@@ -42,8 +42,10 @@ bool isMessageEvent(Map event) {
   if (event['ignorable'] == true) return false;
   final type = event['type'];
   if (type != 'user/message' && type != 'assistant/message') return false;
-  // Non-append surface ops are edits/compactions; v0.1 renders only appends.
-  return event['surfaceOp'] == 'append';
+  final op = event['surfaceOp'];
+  // Appends are the normal case; an omitted op reads as an append, and a
+  // replacement still carries the current content.
+  return op == 'append' || op == null || (op is Map && op['op'] == 'replace');
 }
 
 /// Decode one surface event into a bubble, or null for non-message rows.
@@ -128,8 +130,10 @@ List<ChatMessage> decodeSnapshot(dynamic value) {
   final out = <ChatMessage>[];
   for (final record in records) {
     if (record is! Map) continue;
-    final event = record['event'];
-    if (event is! Map) continue;
+    // Two wire shapes have shipped: `{type:'event', event:{…}}` and the bare
+    // event. Accepting both keeps a snapshot readable across Host builds.
+    final wrapper = record['event'];
+    final event = wrapper is Map ? wrapper : record;
     if (!isMessageEvent(event)) continue;
     final msg = decodeEvent(event);
     // Tool steps carry reasoning but no user-visible answer; only bubbles with

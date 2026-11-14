@@ -24,12 +24,29 @@ void main() {
         'type': 'user/message',
         'seq': 1,
         'data': {
-          'content': [],
+          'content': [
+            {'type': 'text', 'text': 'hi'},
+          ],
           'source': {'kind': 'user'},
         },
-        // surfaceOp missing = replace/compact row under seq decoding
-      }),
-      isNull,
+        // A Host build that omits the default append op still renders.
+      })?.text,
+      'hi',
+    );
+    expect(
+      decodeEvent({
+        'type': 'user/message',
+        'seq': 1,
+        'data': {
+          'content': [
+            {'type': 'text', 'text': 'hi'},
+          ],
+          'source': {'kind': 'user'},
+        },
+        'surfaceOp': {'op': 'replace', 'startSeq': 1, 'endSeq': 1},
+      })?.text,
+      'hi',
+      reason: 'replacements carry the current content',
     );
   });
 
