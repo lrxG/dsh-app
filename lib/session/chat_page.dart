@@ -96,6 +96,12 @@ class _ChatPageState extends State<ChatPage> with RouteAware {
   /// picker open so the sheet label can show a friendly name.
   List<PermissionPreset> _permissionOptions = const [];
 
+  /// Oldest durable seq in the transcript and whether the Host has history
+  /// before it; both drive backwards paging when the list reaches its end.
+  int? _oldestSeq;
+  bool _hasMoreOlder = false;
+  bool _loadingOlder = false;
+
   /// Sheet row label: the PC's own preset name when known.
   String get _permissionLabel {
     final value = _permission;
@@ -239,12 +245,41 @@ class _ChatPageState extends State<ChatPage> with RouteAware {
 
   void _onScroll() {
     if (!_scroll.hasClients) return;
+    // The reversed list's oldest end is maxScrollExtent: page backwards there.
+    if (_hasMoreOlder &&
+        !_loadingOlder &&
+        _scroll.position.pixels >= _scroll.position.maxScrollExtent - 160) {
+      unawaited(_loadOlder());
+    }
     final atBottom = _scroll.position.pixels <= 24;
     if (atBottom == _atBottom && !(atBottom && _unseen > 0)) return;
     setState(() {
       _atBottom = atBottom;
       if (atBottom) _unseen = 0;
     });
+  }
+
+  /// Fetch the page before [_oldestSeq] and prepend it. The reversed list keeps
+  /// the viewport stable: older bubbles land past the current offset.
+  Future<void> _loadOlder() async {
+    final before = _oldestSeq;
+    if (before == null || _loadingOlder || !_hasMoreOlder) return;
+    setState(() => _loadingOlder = true);
+    try {
+      final page = await _rpc.pageSession(_sessionId, beforeSeq: before);
+      if (!mounted) return;
+      setState(() {
+        _loadingOlder = false;
+        final known = _messages.map((m) => m.key).toSet();
+        final older = page.messages.where((m) => !known.contains(m.key)).toList();
+        if (older.isNotEmpty) _messages.insertAll(0, older);
+        if (page.minSeq >= 0) _oldestSeq = page.minSeq;
+        _hasMoreOlder = page.hasMore;
+        _state = '已同步 ${_messages.length} 条消息';
+      });
+    } catch (_) {
+      if (mounted) setState(() => _loadingOlder = false);
+    }
   }
 
   /// Snap (or glide) back to the newest message. In a reversed list that is
@@ -594,12 +629,28 @@ class _ChatPageState extends State<ChatPage> with RouteAware {
     final Object? firstEvent = records is List && records.isNotEmpty && records.first is Map
         ? (records.first as Map)['event']
         : null;
+    // Oldest durable seq in this window, plus whether the Host has more
+    // before it: scrolling to the oldest end pages backwards.
+    int? oldest;
+    if (records is List) {
+      for (final record in records) {
+        if (record is! Map) continue;
+        final event = record['event'] is Map ? record['event'] as Map : record;
+        final seq = event['seq'];
+        if (seq is num && (oldest == null || seq.toInt() < oldest)) {
+          oldest = seq.toInt();
+        }
+      }
+    }
     debugPrint('[lanbuddy] snapshot records=$rawRecords '
         'first=${firstEvent is Map ? firstEvent['type'] : firstEvent?.runtimeType} '
         'bubbles=${bubbles.length}');
     _autoFailures = 0;
     setState(() {
       if (permission != null) _permission = permission;
+      _oldestSeq = oldest;
+      _hasMoreOlder = value['hasMore'] == true;
+      _loadingOlder = false;
       _messages
         ..clear()
         ..addAll(bubbles);
@@ -648,7 +699,7 @@ class _ChatPageState extends State<ChatPage> with RouteAware {
         _live = null;
         _busy = false;
       }
-      _messages.add(msg);
+      appendChatMessage(_messages, msg);
       if (!_atBottom) _unseen++;
       _state = '已同步 ${_messages.length} 条消息';
       _stateColor = Colors.green;
@@ -1384,7 +1435,10 @@ class _ChatPageState extends State<ChatPage> with RouteAware {
     final live = _live;
     final liveBubble = live != null && live.hasContent;
     final queued = _queued;
-    final count = _messages.length + queued.length + (liveBubble ? 1 : 0);
+    final count = _messages.length +
+        queued.length +
+        (liveBubble ? 1 : 0) +
+        (_loadingOlder ? 1 : 0);
 
     return Scaffold(
       backgroundColor: const Color(0xFFF2F2F7),
@@ -1656,6 +1710,23 @@ class _ChatPageState extends State<ChatPage> with RouteAware {
                                 if (i < queued.length) {
                                   return _queuedBubble(
                                       queued[queued.length - 1 - i]);
+                                }
+                                // Oldest end of the reversed list: the previous
+                                // page is on its way.
+                                if (_loadingOlder && i == count - 1) {
+                                  return const Padding(
+                                    padding: EdgeInsets.symmetric(vertical: 16),
+                                    child: Center(
+                                      child: SizedBox(
+                                        width: 18,
+                                        height: 18,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                          color: Color(0xFF8E8E93),
+                                        ),
+                                      ),
+                                    ),
+                                  );
                                 }
                                 final rest = i - queued.length;
                                 if (liveBubble && rest == 0) {

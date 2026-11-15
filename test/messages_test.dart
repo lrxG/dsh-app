@@ -170,6 +170,37 @@ void main() {
     expect(bubbles.single.reasoning, '先看看目录结构');
   });
 
+  test('decodeSnapshot folds consecutive tool steps into one bubble', () {
+    Map<String, dynamic> step(int seq, String reasoning, String tool) => {
+          'type': 'event',
+          'event': {
+            'type': 'assistant/message',
+            'seq': seq,
+            'data': {
+              'message': {
+                'role': 'assistant',
+                'content': [
+                  {'type': 'reasoning', 'text': reasoning},
+                  {'type': 'tool-call', 'id': 'c$seq', 'name': tool},
+                ],
+              },
+            },
+            'surfaceOp': 'append',
+          },
+        };
+    final bubbles = decodeSnapshot({
+      'records': [
+        step(1, '第一步', 'read'),
+        step(2, '第二步', 'bash'),
+        step(3, '第三步', 'read'),
+      ],
+    });
+    expect(bubbles, hasLength(1));
+    expect(bubbles.single.tools, ['read', 'bash']);
+    expect(bubbles.single.reasoning, contains('第一步'));
+    expect(bubbles.single.reasoning, contains('第三步'));
+  });
+
   test('LiveAssistant buffers text/reasoning deltas', () {
     final live = LiveAssistant();
     live.applyChunk({'type': 'chunk', 'chunk': {'type': 'text-delta', 'index': 0, 'text': 'he'}});

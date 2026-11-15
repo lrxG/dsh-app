@@ -37,6 +37,21 @@ class ChatMessage {
 
 enum ChatRole { user, assistant }
 
+/// One backwards history page (`session/page`) decoded for the transcript.
+class ChatHistoryPage {
+  const ChatHistoryPage({
+    required this.messages,
+    required this.hasMore,
+    required this.minSeq,
+  });
+
+  final List<ChatMessage> messages;
+  final bool hasMore;
+
+  /// Smallest durable event seq in the page: the next page's `beforeSeq`.
+  final int minSeq;
+}
+
 /// Whether an event is a real surface message (skips process/ignore rows).
 bool isMessageEvent(Map event) {
   if (event['ignorable'] == true) return false;
@@ -144,9 +159,45 @@ List<ChatMessage> decodeSnapshot(dynamic value) {
         msg.role == ChatRole.assistant &&
         (msg.reasoning?.trim().isNotEmpty ?? false);
     if (msg == null || (!hasText && !hasReasoning)) continue;
-    out.add(msg);
+    appendChatMessage(out, msg);
   }
   return out;
+}
+
+/// Append one bubble, folding a no-answer assistant step into the previous one.
+///
+/// A long tool loop produces dozens of `assistant/message` steps that carry
+/// reasoning and tool calls but no answer text; rendering each as its own card
+/// buried the actual answers in a wall of thinking boxes. Consecutive steps
+/// merge into one bubble with the combined reasoning and tool names.
+void appendChatMessage(List<ChatMessage> list, ChatMessage message) {
+  final prev = list.isEmpty ? null : list.last;
+  final merge = prev != null &&
+      prev.role == ChatRole.assistant &&
+      message.role == ChatRole.assistant &&
+      prev.text.trim().isEmpty &&
+      message.text.trim().isEmpty;
+  if (!merge) {
+    list.add(message);
+    return;
+  }
+  final reason = message.reasoning?.trim();
+  if (reason != null && reason.isNotEmpty) {
+    final existing = prev.reasoning?.trim();
+    final joined = existing == null || existing.isEmpty
+        ? reason
+        : '$existing\n\n$reason';
+    prev.reasoning = joined.length > 4000
+        ? '${joined.substring(0, 4000)}…'
+        : joined;
+  }
+  if (message.tools.isNotEmpty) {
+    final tools = [...prev.tools];
+    for (final tool in message.tools) {
+      if (!tools.contains(tool)) tools.add(tool);
+    }
+    prev.tools = tools;
+  }
 }
 
 /// One prompt the PC accepted but has not started yet — the rows the PC shows

@@ -4,6 +4,8 @@ import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
 
+import 'messages.dart';
+
 /// Generic unary RPC over the Connection HTTP channel.
 ///
 /// Wire format (verified against dsh 0.2.1-rc.3, see docs/PROTOCOL.md):
@@ -266,6 +268,40 @@ class DshRpc {
         .map(PermissionPreset.fromWire)
         .whereType<PermissionPreset>()
         .toList();
+  }
+
+  /// One older history page (`session/page`), used when the transcript is
+  /// scrolled to its oldest end.
+  Future<ChatHistoryPage> pageSession(
+    String sessionId, {
+    int? beforeSeq,
+    int maxMessages = 50,
+  }) async {
+    final value = await call('session/page', <String, dynamic>{
+      'request': <String, dynamic>{
+        'address': {'kind': 'session', 'sessionId': sessionId},
+        'maxMessages': maxMessages,
+        'beforeSeq': ?beforeSeq,
+      },
+    });
+    final map = value is Map ? value : const <String, dynamic>{};
+    var minSeq = -1;
+    final records = map['records'];
+    if (records is List) {
+      for (final record in records) {
+        if (record is! Map) continue;
+        final event = record['event'] is Map ? record['event'] as Map : record;
+        final seq = event['seq'];
+        if (seq is num && (minSeq < 0 || seq.toInt() < minSeq)) {
+          minSeq = seq.toInt();
+        }
+      }
+    }
+    return ChatHistoryPage(
+      messages: decodeSnapshot(map),
+      hasMore: map['hasMore'] == true,
+      minSeq: minSeq,
+    );
   }
 
   /// Switch one session's permission preset.
