@@ -143,6 +143,33 @@ void main() {
     expect(bubbles.map((b) => b.role), [ChatRole.user, ChatRole.assistant]);
   });
 
+  test('decodeSnapshot keeps a tool step that only carries reasoning', () {
+    final bubbles = decodeSnapshot({
+      'records': [
+        {
+          'type': 'event',
+          'event': {
+            'type': 'assistant/message',
+            'seq': 7,
+            'data': {
+              'message': {
+                'role': 'assistant',
+                'content': [
+                  {'type': 'reasoning', 'text': '先看看目录结构'},
+                  {'type': 'tool-call', 'id': 'c1', 'name': 'read'},
+                ],
+              },
+            },
+            'surfaceOp': 'append',
+          },
+        },
+      ],
+    });
+    expect(bubbles, hasLength(1));
+    expect(bubbles.single.text, isEmpty);
+    expect(bubbles.single.reasoning, '先看看目录结构');
+  });
+
   test('LiveAssistant buffers text/reasoning deltas', () {
     final live = LiveAssistant();
     live.applyChunk({'type': 'chunk', 'chunk': {'type': 'text-delta', 'index': 0, 'text': 'he'}});

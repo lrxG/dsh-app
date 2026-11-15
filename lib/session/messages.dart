@@ -136,9 +136,15 @@ List<ChatMessage> decodeSnapshot(dynamic value) {
     final event = wrapper is Map ? wrapper : record;
     if (!isMessageEvent(event)) continue;
     final msg = decodeEvent(event);
-    // Tool steps carry reasoning but no user-visible answer; only bubbles with
-    // actual text belong in the transcript (the thinking block rides along).
-    if (msg != null && msg.text.trim().isNotEmpty) out.add(msg);
+    // Tool steps carry the thinking that led to them but no answer text. They
+    // used to be dropped here, which made the reasoning vanish after a reopen
+    // even though live frames had shown it.
+    final hasText = msg != null && msg.text.trim().isNotEmpty;
+    final hasReasoning = msg != null &&
+        msg.role == ChatRole.assistant &&
+        (msg.reasoning?.trim().isNotEmpty ?? false);
+    if (msg == null || (!hasText && !hasReasoning)) continue;
+    out.add(msg);
   }
   return out;
 }
