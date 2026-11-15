@@ -645,24 +645,34 @@ class _ChatPageState extends State<ChatPage> with RouteAware {
     debugPrint('[lanbuddy] snapshot records=$rawRecords '
         'first=${firstEvent is Map ? firstEvent['type'] : firstEvent?.runtimeType} '
         'bubbles=${bubbles.length}');
+    final hadMessages = _messages.isNotEmpty;
     _autoFailures = 0;
     setState(() {
       if (permission != null) _permission = permission;
-      _oldestSeq = oldest;
-      _hasMoreOlder = value['hasMore'] == true;
+      if (oldest != null && (_oldestSeq == null || oldest < _oldestSeq!)) {
+        _oldestSeq = oldest;
+      }
+      // A reconnect snapshot is only a window of the tail. Merge it into what
+      // is already on screen instead of replacing: replacing dropped every
+      // older page the user had paged in, which looked like messages vanishing.
+      _hasMoreOlder = _hasMoreOlder || value['hasMore'] == true;
       _loadingOlder = false;
-      _messages
-        ..clear()
-        ..addAll(bubbles);
+      if (hadMessages) {
+        _mergeSnapshot(bubbles);
+      } else {
+        _messages
+          ..clear()
+          ..addAll(bubbles);
+      }
       for (final target in _inbox.keys) {
         _inbox[target]!
           ..clear()
           ..addAll(inbox[target] ?? const <QueuedMessage>[]);
       }
-      // The snapshot is the whole transcript, so any live buffer left over
-      // from the previous socket would draw a second, stale copy of the same
-      // answer on top of the durable one it now contains.
-      _live = null;
+      // A first snapshot owns the transcript. On a reconnect, keep the live
+      // attempt: clearing it made the streaming answer blink out until the
+      // next durable message arrived.
+      if (!hadMessages) _live = null;
       _busy = false;
       _state = bubbles.isEmpty
           ? (rawRecords < 0
@@ -672,11 +682,34 @@ class _ChatPageState extends State<ChatPage> with RouteAware {
                   : '已同步 0 条消息 · 收到 $rawRecords 条但无法解析')
           : '已同步 ${_messages.length} 条消息';
       _stateColor = Colors.green;
-      _unseen = 0;
-      _atBottom = true;
+      // A reconnect must not yank a reader back to the newest message.
+      if (!hadMessages) {
+        _unseen = 0;
+        _atBottom = true;
+      }
     });
-    // A reconnect replaces the whole transcript; land on the newest message.
-    _jumpToLatest();
+    // First load lands on the newest message; a merge keeps the scroll position.
+    if (!hadMessages) _jumpToLatest();
+  }
+
+  /// Fold a snapshot's tail window into the transcript: overlapping keys take
+  /// the snapshot's values, new keys are appended, older paged-in messages stay.
+  void _mergeSnapshot(List<ChatMessage> incoming) {
+    if (incoming.isEmpty) return;
+    final byKey = {for (final message in _messages) message.key: message};
+    for (final message in incoming) {
+      final existing = byKey[message.key];
+      if (existing == null) {
+        _messages.add(message);
+        continue;
+      }
+      existing
+        ..seq = message.seq
+        ..text = message.text
+        ..reasoning = message.reasoning
+        ..tools = message.tools;
+    }
+    _messages.sort((a, b) => a.seq.compareTo(b.seq));
   }
 
   void _onDurableEvent(Map event) {
